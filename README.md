@@ -1,28 +1,14 @@
-# PALA BET AI — Ana Aşama 1 / V0.1
+# PALA BET AI V0.3 — Provider Foundation
 
-## Durum
-Bu bir **gerçek kaynak kodu başlangıç paketidir**. Android uygulaması demo fikstürleriyle yerel Poisson olasılıkları hesaplar. Python backend ayrı bir araştırma API'si sağlar. Android henüz backend'e bağlanmaz; canlı veri, kadro, oran ve bahis işlevleri yoktur. Elo fonksiyonu backend'de vardır, Android ekranındaki 1X2 tahmini henüz Elo ile birleştirilmez.
+- Android versionCode 3, versionName 0.3.0; explicit DEMO data provenance on analysis screen.
+- Backend `GET /fixtures/{competition}` with optional football-data.org API integration.
+- Backend API key is read only from `FOOTBALL_DATA_API_KEY` environment variable, never shipped in the APK.
+- 5-minute in-process cache and controlled provider failure responses.
+- Provider adapter unit tests using mock transport (no network needed).
+- Updated Android GitHub Actions artifact name.
 
-## Android APK (GitHub Actions)
-1. ZIP içeriğini GitHub'da yeni bir depoya yükleyin (dosyalar depo kökünde olmalı).
-2. Actions → Android Debug APK → Run workflow.
-3. İşlem başarılıysa Artifacts bölümündeki PALA-BET-AI-v0.1-debug dosyasını indirin.
-4. APK test sürümüdür; Play Store için imzalı AAB ve ayrı uyumluluk çalışması gerekir.
+**Scope limit:** The Android app still uses demo fixtures and on-device Poisson calculations. The backend endpoint is NOT yet connected to the Android UI. No claim of live odds or verified predictive accuracy.
 
-## Backend
-```bash
-cd backend
-python -m venv .venv
-pip install -r requirements.txt
-python -m pytest -q
-uvicorn app.main:app --reload
-```
-Swagger: http://127.0.0.1:8000/docs
+**Repo cleanup:** The repository currently contains both root `app/`, `backend/` and a nested `PALA-BET-AI/` copy. Upload the ZIP contents into repository ROOT, then remove only the nested `PALA-BET-AI/` folder after verifying it is an obsolete duplicate. Do not delete root `app/`, `backend/` or `.github/`.
 
-## Önemli sınırlamalar
-- Ekrandaki maçlar **uydurma örnek maçlardır**, gerçek maç gibi kullanılmamalıdır.
-- Android uygulaması ağ izni istemez, API anahtarı içermez.
-- Android Poisson toplamı 0..12 golle sınırlıdır; Python modeli 0..18 kullanır. İleride ortak sayısal testlerle eşitlenecek.
-- Henüz cihaz üzerinde APK derlemesi doğrulanmadı. CI yapılandırması sağlandı, derleme sonucu GitHub'da görülmelidir.
-- Gerçek zamanlı veri, ticari kullanım lisansları ve Türkiye/Google Play uyumluluğu ayrıca değerlendirilecektir.
-- Kumar/bahis işlemleri ve kazanç garantisi yoktur.
+**Provider setup:** Configure `FOOTBALL_DATA_API_KEY` only on the backend server environment. Do not commit secrets or insert them in Android code. No paid plan required for offline demo mode.
