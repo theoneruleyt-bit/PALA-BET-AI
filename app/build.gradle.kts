@@ -2,7 +2,7 @@ plugins { id("com.android.application"); id("org.jetbrains.kotlin.android"); id(
 android {
  namespace = "com.palasoftware.palabetai"
  compileSdk = 35
- defaultConfig { applicationId = "com.palasoftware.palabetai"; minSdk = 26; targetSdk = 35; versionCode = 8; versionName = "1.0.0-free" }
+ defaultConfig { applicationId = "com.palasoftware.palabetai"; minSdk = 26; targetSdk = 35; versionCode = 9; versionName = "1.1.0-free" }
  buildTypes { release { isMinifyEnabled = false } }
  compileOptions { sourceCompatibility = JavaVersion.VERSION_17; targetCompatibility = JavaVersion.VERSION_17 }
  kotlinOptions { jvmTarget = "17" }

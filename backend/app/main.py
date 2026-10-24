@@ -2,7 +2,7 @@ from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, Field
 from .model import predict, elo_expected, fair_odds
 from .football_data import get_matches as get_football_data_matches, ProviderError
-from .openligadb import get_matches as get_openliga_matches, get_raw_matches, OpenLigaError, LEAGUES
+from .openligadb import get_matches as get_openliga_matches, get_raw_matches, OpenLigaError, LEAGUES, discover_turkish_leagues, dynamic_fixtures, get_dynamic_raw
 from .analysis_v06 import normalize, estimate, backtest
 from .markets import extra_markets
 
@@ -22,7 +22,11 @@ def health():
 
 @app.get('/leagues')
 def leagues():
-    return {'keyless':[{'code':code,'name':name} for code,name in FREE_LEAGUE_NAMES.items()], 'optional_token':['PL','PD','SA','FL1'], 'note':'Only curated leagues with public OpenLigaDB shortcuts. Availability and completeness may vary. Turkish leagues not verified.'}
+    return {'keyless':[{'code':code,'name':name} for code,name in FREE_LEAGUE_NAMES.items()], 'turkish_discovery':_turkish_catalog(), 'optional_token':['PL','PD','SA','FL1'], 'note':'Only curated leagues with public OpenLigaDB shortcuts. Availability and completeness may vary. Turkish leagues not verified.'}
+
+def _turkish_catalog():
+    try: return discover_turkish_leagues()
+    except OpenLigaError: return []
 
 @app.post('/analyze')
 def analyze(data: MatchInput):
@@ -34,6 +38,8 @@ def fixtures(competition: str):
     try:
         if competition in LEAGUES:
             return get_openliga_matches(competition)
+        if competition.startswith('TR:'):
+            return dynamic_fixtures(competition)
         if competition in ('PL','PD','SA','FL1'):
             return get_football_data_matches(competition)
         raise HTTPException(status_code=400, detail='Unsupported competition')
@@ -43,10 +49,10 @@ def fixtures(competition: str):
 
 @app.get('/research/{competition}/{match_id}')
 def research(competition: str, match_id: str):
-    if competition not in LEAGUES:
+    if competition not in LEAGUES and not competition.startswith('TR:'):
         raise HTTPException(status_code=400, detail='Research not available for this competition')
     try:
-        raw = get_raw_matches(competition)
+        raw = get_dynamic_raw(competition) if competition.startswith('TR:') else get_raw_matches(competition)
     except OpenLigaError as exc:
         raise HTTPException(status_code=503, detail='Historical provider unavailable') from exc
     target = next((m for m in raw if str(m.get('matchID')) == match_id), None)
@@ -57,4 +63,4 @@ def research(competition: str, match_id: str):
     before = target.get('matchDateTimeUTC')
     history = normalize(raw)
     result = estimate(history, home, away, before=before) if home and away and before else None
-    return {'source':'OpenLigaDB (community data)', 'competition':competition, 'match_id':match_id, 'status':'estimated' if result else 'insufficient_data', 'analysis':result, 'markets':extra_markets(result) if result else None, 'validation':backtest(history), 'note':'Research-only estimates; past match scores are not xG. Data may be incomplete.'}
+    return {'source':'OpenLigaDB (community data)', 'competition':competition, 'match_id':match_id, 'status':'estimated' if result else 'insufficient_data', 'analysis':result, 'markets':extra_markets(result) if result else None, 'validation':backtest(history), 'event_markets':{'corners':{'status':'unavailable','reason':'No verified corner event history'},'yellow_cards':{'status':'unavailable','reason':'No verified card event history'},'red_cards':{'status':'unavailable','reason':'No verified red-card event history'},'penalties':{'status':'unavailable','reason':'No verified penalty event history'}}, 'note':'Research-only estimates; past match scores are not xG. Data may be incomplete.'}

@@ -44,6 +44,33 @@ private val white = Color(0xFFF5F8FC)
 private val leagues = listOf("BL1" to "Bundesliga", "BL2" to "2. Bundesliga", "BL3" to "3. Liga", "UCL" to "Şampiyonlar Ligi", "UEL" to "Avrupa Ligi", "DFB" to "Almanya Kupası", "PLFREE" to "Premier League (topluluk)", "LALIGA" to "La Liga (topluluk)", "WBL" to "Kadınlar Bundesliga", "NLA" to "Uluslar Ligi A", "RLN" to "Regionalliga Nord", "RLNO" to "Regionalliga Nordost", "PL" to "Premier League*", "PD" to "La Liga*", "SA" to "Serie A*", "FL1" to "Ligue 1*")
 private data class Match(val id:String,val home:String,val away:String,val utc:String,val status:String)
 private data class Fixtures(val matches:List<Match>,val source:String,val fetched:String)
+private data class League(val code:String,val name:String)
+private data class ExtendedMarkets(val goalLines:List<Pair<String,Double>>,val scores:List<Pair<String,Double>>,val teamGoals:List<Pair<String,Double>>)
+private suspend fun loadTurkishLeagues(base:String):List<League> = withContext(Dispatchers.IO) {
+    val j=request("${base.trimEnd('/')}/leagues")
+    val arr=j.optJSONArray("turkish_discovery") ?: return@withContext emptyList()
+    (0 until arr.length()).mapNotNull { i ->
+        val x=arr.optJSONObject(i) ?: return@mapNotNull null
+        val code=x.optString("code");val name=x.optString("name")
+        if(code.startsWith("TR:") && name.isNotBlank()) League(code,name) else null
+    }.distinctBy { it.code }
+}
+private suspend fun extendedMarkets(base:String,league:String,id:String):ExtendedMarkets? = withContext(Dispatchers.IO) {
+    val j=request("${base.trimEnd('/')}/research/$league/$id").optJSONObject("markets") ?: return@withContext null
+    val goal=j.optJSONObject("goal_lines")
+    val lines=goal?.keys()?.asSequence()?.toList()?.sortedBy { it.toDoubleOrNull() ?: 99.0 }?.mapNotNull { key ->
+        val over=goal.optJSONObject(key)?.optDouble("over") ?: return@mapNotNull null
+        "${key} Üst" to over
+    } ?: emptyList()
+    val score=j.optJSONArray("correct_score_top5")
+    val scores=if(score==null) emptyList() else (0 until score.length()).mapNotNull { i ->
+        val item=score.optJSONObject(i) ?: return@mapNotNull null
+        item.optString("score") to item.optDouble("probability")
+    }
+    val tg=j.optJSONObject("team_goals")
+    val team=if(tg==null) emptyList() else tg.keys().asSequence().toList().sorted().map { it.replace('_',' ') to tg.optDouble(it) }
+    ExtendedMarkets(lines,scores,team)
+}
 private data class Analysis(val home:Double,val draw:Double,val away:Double,val btts:Double,val over:Double,val under:Double,val homeSample:Int,val awaySample:Int,val homeGoals:Double?,val awayGoals:Double?,val method:String)
 private fun local(value:String):String = try { DateTimeFormatter.ofPattern("dd.MM.yyyy • HH:mm").withZone(ZoneId.systemDefault()).format(Instant.parse(value)) } catch (_:Exception) { value }
 private fun percentage(n:Double):String = String.format(Locale.US,"%.1f%%",n*100)
@@ -79,6 +106,9 @@ class MainActivity:ComponentActivity() {
 @Composable private fun App() {
     val base=BuildConfig.API_BASE_URL
     var league by remember { mutableStateOf("BL1") }
+    var turkish by remember { mutableStateOf<List<League>>(emptyList()) }
+    var expanded by remember { mutableStateOf<ExtendedMarkets?>(null) }
+    LaunchedEffect(base) { if(base.isNotBlank()) try { turkish=loadTurkishLeagues(base) } catch (_:Exception) { turkish=emptyList() } }
     var search by remember { mutableStateOf("") }
     var result by remember { mutableStateOf<Fixtures?>(null) }
     var error by remember { mutableStateOf<String?>(null) }
@@ -95,11 +125,11 @@ class MainActivity:ComponentActivity() {
         try { result=fixtures(base,league) } catch(e:Exception) { error=e.message ?: "Bağlantı kurulamadı" } finally { loading=false }
     }
     LaunchedEffect(selected?.id,league) {
-        estimate=null;analysisError=null
+        estimate=null;expanded=null;analysisError=null
         val m=selected ?: return@LaunchedEffect
-        if(base.isBlank() || league !in listOf("BL1","BL2","BL3","UCL","UEL","DFB","PLFREE","LALIGA","WBL","NLA","RLN","RLNO")) return@LaunchedEffect
+        if(base.isBlank() || (league !in listOf("BL1","BL2","BL3","UCL","UEL","DFB","PLFREE","LALIGA","WBL","NLA","RLN","RLNO") && !league.startsWith("TR:"))) return@LaunchedEffect
         analysisLoading=true
-        try { estimate=analysis(base,league,m.id) } catch(e:Exception) { analysisError=e.message ?: "Analiz alınamadı" } finally { analysisLoading=false }
+        try { estimate=analysis(base,league,m.id); if(estimate!=null) expanded=extendedMarkets(base,league,m.id) } catch(e:Exception) { analysisError=e.message ?: "Analiz alınamadı" } finally { analysisLoading=false }
     }
     MaterialTheme(colorScheme=darkColorScheme(primary=mint,background=bg,surface=surface,onBackground=white,onSurface=white)) {
         Column(Modifier.fillMaxSize().background(bg).statusBarsPadding()) {
@@ -113,10 +143,10 @@ class MainActivity:ComponentActivity() {
                     Text("Gerçek fikstürler • Kaynak bilgisiyle",color=muted,fontSize=13.sp)
                     Spacer(Modifier.height(16.dp))
                     Row(Modifier.horizontalScroll(rememberScrollState()),horizontalArrangement=Arrangement.spacedBy(8.dp)) {
-                        leagues.forEach { (code,name) -> FilterChip(selected=league==code,onClick={league=code},label={Text(name)},colors=FilterChipDefaults.filterChipColors(selectedContainerColor=surface2,selectedLabelColor=mint)) }
+                        (turkish.map { it.code to it.name } + leagues).forEach { (code,name) -> FilterChip(selected=league==code,onClick={league=code},label={Text(name)},colors=FilterChipDefaults.filterChipColors(selectedContainerColor=surface2,selectedLabelColor=mint)) }
                     }
                     Spacer(Modifier.height(8.dp))
-                    Text("Türkiye ligleri: doğrulanmış ücretsiz güncel veri bulunamadı. * API anahtarı gerektirir.",color=muted,fontSize=11.sp)
+                    Text(if(turkish.isEmpty()) "Türkiye: ücretsiz topluluk kataloğunda doğrulanmış lig bulunamadı. * API anahtarı gerektirir." else "Türkiye ligleri: topluluk kataloğu • fikstür ve analiz kapsamı değişebilir. * API anahtarı gerektirir.",color=muted,fontSize=11.sp)
                     Spacer(Modifier.height(10.dp))
                     OutlinedTextField(value=search,onValueChange={search=it},label={Text("Takım ara")},singleLine=true,modifier=Modifier.fillMaxWidth())
                     Spacer(Modifier.height(10.dp))
@@ -154,7 +184,7 @@ class MainActivity:ComponentActivity() {
                         item { MatchHero(match,league) }
                         item {
                             Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),horizontalArrangement=Arrangement.spacedBy(8.dp)) {
-                                listOf("Analiz","İstatistikler","Tahminler","Kadrolar","H2H").forEachIndexed { i,label ->
+                                listOf("Analiz","İstatistikler","Tahminler","Korner","Kartlar","Penaltı","Kadrolar","H2H").forEachIndexed { i,label ->
                                     FilterChip(selected=tab==i,onClick={tab=i},label={Text(label)},colors=FilterChipDefaults.filterChipColors(selectedContainerColor=surface2,selectedLabelColor=mint))
                                 }
                             }
@@ -165,14 +195,20 @@ class MainActivity:ComponentActivity() {
                         else {
                             val a=estimate!!
                             when(tab) {
-                                0,2 -> {
+                                0 -> {
                                     item { Panel { Text("Kazanma olasılıkları (1X2)",color=white,fontWeight=FontWeight.Bold,fontSize=17.sp);Spacer(Modifier.height(14.dp));Row(horizontalArrangement=Arrangement.spacedBy(8.dp)) { ProbabilityTile("Ev sahibi",a.home,mint,Modifier.weight(1f));ProbabilityTile("Beraberlik",a.draw,muted,Modifier.weight(1f));ProbabilityTile("Deplasman",a.away,purple,Modifier.weight(1f)) } } }
                                     item { Row(horizontalArrangement=Arrangement.spacedBy(10.dp)) { Panel(Modifier.weight(1f)) { Text("Çifte şans",color=white,fontWeight=FontWeight.Bold);Spacer(Modifier.height(10.dp));BarLine("1X",a.home+a.draw,mint);BarLine("X2",a.draw+a.away,muted);BarLine("12",a.home+a.away,purple) };Panel(Modifier.weight(1f)) { Text("Toplam gol (2.5)",color=white,fontWeight=FontWeight.Bold);Spacer(Modifier.height(10.dp));BarLine("Üst",a.over,mint);BarLine("Alt",a.under,muted) } } }
                                     item { Panel { Text("Karşılıklı gol (KG)",color=white,fontWeight=FontWeight.Bold);Spacer(Modifier.height(12.dp));Row(horizontalArrangement=Arrangement.spacedBy(10.dp)) { ProbabilityTile("Var",a.btts,mint,Modifier.weight(1f));ProbabilityTile("Yok",1-a.btts,muted,Modifier.weight(1f)) } } }
                                     item { Panel { Text("Analiz özeti",color=mint,fontWeight=FontWeight.Bold,fontSize=18.sp);Spacer(Modifier.height(8.dp));Text("Gerçek geçmiş maç sonuçlarından hesaplanan araştırma olasılıkları. xG veya doğrulanmış Elo modeli değildir.",color=white);Spacer(Modifier.height(10.dp));Text("Örnek sayısı: ${match.home}: ${a.homeSample} • ${match.away}: ${a.awaySample}",color=muted,fontSize=13.sp);Text("Model: ${a.method}",color=muted,fontSize=12.sp);Text("Kaynak: ${result?.source ?: "Bilinmiyor"}",color=muted,fontSize=12.sp);Text("Tahminler garanti içermez; güven puanı hesaplanmamıştır.",color=muted,fontSize=12.sp) } }
                                 }
+                                2 -> {
+                                    item { Panel { Text("Gelişmiş gol pazarları",color=mint,fontWeight=FontWeight.Bold,fontSize=18.sp);Spacer(Modifier.height(8.dp));if(expanded==null) Text("Pazar verisi yüklenemedi",color=muted) else expanded!!.goalLines.forEach { (label,p) -> BarLine(label,p,mint) } } }
+                                    item { Panel { Text("Takım gol olasılıkları",color=white,fontWeight=FontWeight.Bold);Spacer(Modifier.height(8.dp));expanded?.teamGoals?.forEach { (label,p) -> BarLine(label,p,purple) } } }
+                                    item { Panel { Text("En olası skorlar",color=white,fontWeight=FontWeight.Bold);Spacer(Modifier.height(8.dp));expanded?.scores?.forEach { (label,p) -> BarLine(label,p,mint) } } }
+                                }
+                                3,4,5 -> item { MessageCard(listOf("Korner", "Kartlar", "Penaltı")[tab-3]+" analizi", "Bu karşılaşma için doğrulanmış olay bazlı geçmiş veri bulunmuyor. Yalnızca gol sonuçlarından korner, kart veya penaltı olasılığı hesaplanmaz. Rastgele yüzde gösterilmiyor.") }
                                 1 -> item { Panel { Text("Beklenen gol ortalaması (model)",color=white,fontWeight=FontWeight.Bold);Spacer(Modifier.height(10.dp));Text("${match.home}: ${a.homeGoals?.let { String.format(Locale.US,"%.2f",it) } ?: "Veri yok"}",color=mint);Text("${match.away}: ${a.awayGoals?.let { String.format(Locale.US,"%.2f",it) } ?: "Veri yok"}",color=purple);Spacer(Modifier.height(8.dp));Text("Bu değerler geçmiş skorlarla hesaplanan Poisson parametreleridir, xG değildir.",color=muted,fontSize=12.sp) } }
-                                else -> item { MessageCard(if(tab==3) "Kadro bilgisi mevcut değil" else "İkili rekabet verisi mevcut değil","Bu bölüm için doğrulanmış veri kaynağı henüz bağlı değil. Bilgi uydurulmuyor.") }
+                                else -> item { MessageCard(if(tab==6) "Kadro bilgisi mevcut değil" else "İkili rekabet verisi mevcut değil","Bu bölüm için doğrulanmış veri kaynağı henüz bağlı değil. Bilgi uydurulmuyor.") }
                             }
                         }
                     }
