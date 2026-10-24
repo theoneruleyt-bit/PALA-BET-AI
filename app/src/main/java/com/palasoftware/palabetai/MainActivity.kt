@@ -28,17 +28,18 @@ private val demos = listOf(
  Fixture("Yıldız SK", "Deniz FK", "Örnek Lig A", 1.82, 0.93),
  Fixture("Ormanspor", "Başkent SK", "Örnek Lig C", 1.10, 1.17)
 )
-data class Odds(val home: Double, val draw: Double, val away: Double, val over25: Double)
+data class Odds(val home: Double, val draw: Double, val away: Double, val over25: Double, val btts: Double)
 private fun poisson(lambda: Double, k: Int): Double { var factorial = 1.0; for (i in 2..k) factorial *= i; return exp(-lambda) * lambda.pow(k) / factorial }
 private fun predict(f: Fixture): Odds {
- var h=0.0; var d=0.0; var a=0.0; var over=0.0
+ var h=0.0; var d=0.0; var a=0.0; var over=0.0; var btts=0.0
  for (i in 0..12) for (j in 0..12) {
   val p=poisson(f.homeAttack,i)*poisson(f.awayAttack,j)
   when { i>j -> h+=p; i==j -> d+=p; else -> a+=p }
   if(i+j>2) over+=p
+  if(i>0 && j>0) btts+=p
  }
  val total=h+d+a
- return Odds(h/total,d/total,a/total,over)
+ return Odds(h/total,d/total,a/total,over/total,btts/total)
 }
 private fun pct(x: Double) = String.format(Locale.US,"%.1f%%",x*100)
 class MainActivity : ComponentActivity() {
@@ -50,7 +51,7 @@ class MainActivity : ComponentActivity() {
  MaterialTheme(colorScheme=darkColorScheme(primary=Accent,background=Background,surface=Surface,onBackground=Color.White,onSurface=Color.White)) {
   Column(Modifier.fillMaxSize().background(Background).padding(18.dp)) {
    Text("PALA BET AI",style=MaterialTheme.typography.headlineMedium,fontWeight=FontWeight.Black,color=Accent)
-   Text("FOOTBALL INTELLIGENCE • V0.1",color=Color.LightGray,style=MaterialTheme.typography.labelSmall)
+   Text("FOOTBALL INTELLIGENCE • V0.2",color=Color.LightGray,style=MaterialTheme.typography.labelSmall)
    Spacer(Modifier.height(14.dp))
    Card(colors=CardDefaults.cardColors(containerColor=Color(0xFF254038))) {
     Text("DEMO MODU • Bu karşılaşmalar gerçek değildir. Tahminler örnek parametrelerle hesaplanır; bahis tavsiyesi değildir.",modifier=Modifier.padding(14.dp),color=Color.White)
@@ -93,6 +94,8 @@ class MainActivity : ComponentActivity() {
     Card(colors=CardDefaults.cardColors(containerColor=Surface)) {
      Column(Modifier.fillMaxWidth().padding(18.dp)) {
       Text("Gol modelleri",fontWeight=FontWeight.Bold)
+      Text("KG Var: ${pct(o.btts)}", color=Accent)
+      Text("2.5 Alt: ${pct(1-o.over25)}", color=Color.LightGray)
       Spacer(Modifier.height(8.dp))
       Text("2.5 Üst: ${pct(o.over25)}")
       Text("2.5 Alt: ${pct(1-o.over25)}")
