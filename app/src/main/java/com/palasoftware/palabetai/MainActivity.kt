@@ -4,20 +4,26 @@ import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import org.json.JSONObject
@@ -26,151 +32,147 @@ import java.net.URL
 import java.time.Instant
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
+import java.util.Locale
 
-private val bg = Color(0xFF091218)
-private val surface = Color(0xFF17262D)
-private val accent = Color(0xFF34D399)
-private val muted = Color(0xFFB9C8CD)
-private data class Match(val id:String, val home:String, val away:String, val utc:String, val status:String)
-private data class Result(val matches:List<Match>,val source:String,val fetched:String)
+private val bg = Color(0xFF07131D)
+private val surface = Color(0xFF122631)
+private val surface2 = Color(0xFF1B3442)
+private val mint = Color(0xFF34D6A1)
+private val purple = Color(0xFFB375F5)
+private val muted = Color(0xFFA9BBC7)
+private val white = Color(0xFFF5F8FC)
 private val leagues = listOf("BL1" to "Bundesliga", "BL2" to "2. Bundesliga", "PL" to "Premier League*", "PD" to "La Liga*", "SA" to "Serie A*", "FL1" to "Ligue 1*")
-private fun local(utc:String):String = try { DateTimeFormatter.ofPattern("dd.MM.yyyy • HH:mm").withZone(ZoneId.systemDefault()).format(Instant.parse(utc)) } catch (_:Exception) { utc }
-private suspend fun fetch(base:String,league:String):Result = withContext(Dispatchers.IO) {
-    require(base.startsWith("https://")) { "HTTPS bağlantısı gerekli" }
-    val conn = URL("${base.trimEnd('/')}/fixtures/$league").openConnection() as HttpURLConnection
+private data class Match(val id:String,val home:String,val away:String,val utc:String,val status:String)
+private data class Fixtures(val matches:List<Match>,val source:String,val fetched:String)
+private data class Analysis(val home:Double,val draw:Double,val away:Double,val btts:Double,val over:Double,val under:Double,val homeSample:Int,val awaySample:Int,val homeGoals:Double?,val awayGoals:Double?,val method:String)
+private fun local(value:String):String = try { DateTimeFormatter.ofPattern("dd.MM.yyyy • HH:mm").withZone(ZoneId.systemDefault()).format(Instant.parse(value)) } catch (_:Exception) { value }
+private fun percentage(n:Double):String = String.format(Locale.US,"%.1f%%",n*100)
+private fun request(url:String):JSONObject {
+    val conn = URL(url).openConnection() as HttpURLConnection
     conn.connectTimeout = 15000
-    conn.readTimeout = 15000
+    conn.readTimeout = 25000
     try {
-        if(conn.responseCode != 200) throw IllegalStateException("Sunucu HTTP ${conn.responseCode} döndürdü")
-        val json = JSONObject(conn.inputStream.bufferedReader().use { it.readText() })
-        if(json.optString("mode") != "provider") throw IllegalStateException("Doğrulanmış sağlayıcı yanıtı alınamadı")
-        val arr = json.getJSONArray("matches")
-        val matches = (0 until arr.length()).mapNotNull { i ->
-            val m = arr.getJSONObject(i)
-            val home = m.optString("home")
-            val away = m.optString("away")
-            if(home.isBlank() || away.isBlank()) null else Match(m.optString("id"),home,away,m.optString("utc_date"),m.optString("status"))
-        }
-        Result(matches,json.optString("source"),json.optString("fetched_at"))
+        if(conn.responseCode != 200) throw IllegalStateException("HTTP ${conn.responseCode}")
+        return JSONObject(conn.inputStream.bufferedReader().use { it.readText() })
     } finally { conn.disconnect() }
 }
-
-private data class Research(val status:String, val details:String)
-private suspend fun fetchResearch(base:String, league:String, id:String):Research = withContext(Dispatchers.IO) {
-    val conn = URL("${base.trimEnd('/')}/research/$league/$id").openConnection() as HttpURLConnection
-    conn.connectTimeout = 15000
-    conn.readTimeout = 20000
-    try {
-        if (conn.responseCode != 200) throw IllegalStateException("Analiz HTTP ${conn.responseCode}")
-        val json = JSONObject(conn.inputStream.bufferedReader().use { it.readText() })
-        val analysis = json.optJSONObject("analysis")
-        if (analysis == null) Research("insufficient_data", "Yeterli geçmiş maç verisi bulunamadı. Tahmin üretilmedi.")
-        else {
-            val p = analysis.getJSONObject("probabilities")
-            fun pct(k:String) = String.format(java.util.Locale.US,"%.1f%%",p.getDouble(k)*100)
-            val n = analysis.getJSONObject("sample")
-            Research("estimated", "1: ${pct("home")}   X: ${pct("draw")}   2: ${pct("away")}\nKG Var: ${pct("btts")}\n2.5 Üst: ${pct("over25")}   Alt: ${pct("under25")}\nSon maç örnekleri: ${n.getInt("home")} / ${n.getInt("away")}\nYöntem: Geçmiş gol ortalamaları + Poisson. xG değildir; garanti içermez.")
-        }
-    } finally { conn.disconnect() }
+private suspend fun fixtures(base:String,league:String):Fixtures = withContext(Dispatchers.IO) {
+    require(base.startsWith("https://")) { "HTTPS adresi gerekli" }
+    val j = request("${base.trimEnd('/')}/fixtures/$league")
+    if(j.optString("mode") != "provider") throw IllegalStateException("Sağlayıcı verisi doğrulanamadı")
+    val arr = j.getJSONArray("matches")
+    val matches = (0 until arr.length()).mapNotNull { i ->
+        val m=arr.getJSONObject(i)
+        val h=m.optString("home");val a=m.optString("away")
+        if(h.isBlank() || a.isBlank()) null else Match(m.optString("id"),h,a,m.optString("utc_date"),m.optString("status"))
+    }
+    Fixtures(matches,j.optString("source"),j.optString("fetched_at"))
 }
-
+private suspend fun analysis(base:String,league:String,id:String):Analysis? = withContext(Dispatchers.IO) {
+    val j=request("${base.trimEnd('/')}/research/$league/$id").optJSONObject("analysis") ?: return@withContext null
+    val p=j.getJSONObject("probabilities");val n=j.getJSONObject("sample");val goals=j.optJSONObject("goal_rates")
+    Analysis(p.getDouble("home"),p.getDouble("draw"),p.getDouble("away"),p.getDouble("btts"),p.getDouble("over25"),p.getDouble("under25"),n.getInt("home"),n.getInt("away"),goals?.optDouble("home")?.takeUnless { it.isNaN() },goals?.optDouble("away")?.takeUnless { it.isNaN() },j.optString("method","Poisson + geçmiş gol ortalamaları"))
+}
 class MainActivity:ComponentActivity() {
-    override fun onCreate(savedInstanceState:Bundle?) { super.onCreate(savedInstanceState); setContent { Screen() } }
+    override fun onCreate(savedInstanceState:Bundle?) { super.onCreate(savedInstanceState);window.statusBarColor=android.graphics.Color.rgb(7,19,29);window.navigationBarColor=android.graphics.Color.rgb(7,19,29);setContent { App() } }
 }
-
-@Composable private fun Screen() {
-    val base = BuildConfig.API_BASE_URL
+@Composable private fun App() {
+    val base=BuildConfig.API_BASE_URL
     var league by remember { mutableStateOf("BL1") }
     var search by remember { mutableStateOf("") }
-    var response by remember { mutableStateOf<Result?>(null) }
+    var result by remember { mutableStateOf<Fixtures?>(null) }
     var error by remember { mutableStateOf<String?>(null) }
     var selected by remember { mutableStateOf<Match?>(null) }
     var loading by remember { mutableStateOf(false) }
-    var research by remember { mutableStateOf<Research?>(null) }
-    var researchError by remember { mutableStateOf<String?>(null) }
-    var researchLoading by remember { mutableStateOf(false) }
-    LaunchedEffect(selected?.id, league) {
-        research = null; researchError = null
-        val m = selected ?: return@LaunchedEffect
-        if (base.isBlank() || league !in listOf("BL1","BL2")) return@LaunchedEffect
-        researchLoading = true
-        try { research = fetchResearch(base,league,m.id) }
-        catch (e:Exception) { researchError = e.message ?: "Analiz alınamadı" }
-        finally { researchLoading = false }
-    }
     var refresh by remember { mutableIntStateOf(0) }
+    var estimate by remember { mutableStateOf<Analysis?>(null) }
+    var analysisLoading by remember { mutableStateOf(false) }
+    var analysisError by remember { mutableStateOf<String?>(null) }
     LaunchedEffect(league,refresh) {
-        selected = null
-        response = null
-        error = null
+        selected=null;result=null;error=null
         if(base.isBlank()) return@LaunchedEffect
-        loading = true
-        try { response = fetch(base,league) } catch(e:Exception) { error = e.message ?: "Bağlantı kurulamadı" } finally { loading = false }
+        loading=true
+        try { result=fixtures(base,league) } catch(e:Exception) { error=e.message ?: "Bağlantı kurulamadı" } finally { loading=false }
     }
-    MaterialTheme(colorScheme = darkColorScheme(primary=accent,background=bg,surface=surface,onBackground=Color.White,onSurface=Color.White)) {
-        Column(Modifier.fillMaxSize().background(bg).padding(horizontal=18.dp, vertical=14.dp)) {
-            Text("PALA BET AI",style=MaterialTheme.typography.headlineMedium,fontWeight=FontWeight.Black,color=accent)
-            Text("FOOTBALL INTELLIGENCE  •  V${BuildConfig.VERSION_NAME}",color=muted,style=MaterialTheme.typography.labelMedium)
-            Spacer(Modifier.height(22.dp))
-            if(selected != null) {
-                val match = selected!!
-                TextButton(onClick={selected=null}) { Text("← Maç listesine dön") }
-                Text("${match.home} – ${match.away}",style=MaterialTheme.typography.headlineSmall,color=Color.White,fontWeight=FontWeight.Bold)
-                Spacer(Modifier.height(10.dp))
-                Text(local(match.utc),color=muted)
-                Text("Durum: ${match.status}",color=muted)
-                Spacer(Modifier.height(20.dp))
-                Card(colors=CardDefaults.cardColors(containerColor=surface)) {
-                    Column(Modifier.padding(18.dp)) {
-                        Text("GERÇEK FİKSTÜR",color=accent,fontWeight=FontWeight.Bold)
-                        Spacer(Modifier.height(8.dp))
-                        Text("ARAŞTIRMA TAHMİNİ • V0.6",color=accent,fontWeight=FontWeight.Bold)
-                        Spacer(Modifier.height(8.dp))
-                        if(researchLoading) CircularProgressIndicator(Modifier.size(24.dp))
-                        if(research != null) Text(research!!.details,color=Color.White)
-                        else if(researchError != null) Text("Analiz alınamadı: $researchError",color=muted)
-                        else Text("Bu lig veya maç için doğrulanabilir geçmiş veri yok; tahmin gösterilmiyor.",color=Color.White)
-                        Spacer(Modifier.height(8.dp))
-                        Text("Kaynak: ${response?.source ?: "Bilinmiyor"}",color=muted,style=MaterialTheme.typography.bodySmall)
+    LaunchedEffect(selected?.id,league) {
+        estimate=null;analysisError=null
+        val m=selected ?: return@LaunchedEffect
+        if(base.isBlank() || league !in listOf("BL1","BL2")) return@LaunchedEffect
+        analysisLoading=true
+        try { estimate=analysis(base,league,m.id) } catch(e:Exception) { analysisError=e.message ?: "Analiz alınamadı" } finally { analysisLoading=false }
+    }
+    MaterialTheme(colorScheme=darkColorScheme(primary=mint,background=bg,surface=surface,onBackground=white,onSurface=white)) {
+        Column(Modifier.fillMaxSize().background(bg).statusBarsPadding()) {
+            Column(Modifier.fillMaxWidth().padding(start=20.dp,end=20.dp,top=8.dp,bottom=12.dp)) {
+                Text("PALA BET AI",color=mint,fontSize=31.sp,fontWeight=FontWeight.Black)
+                Text("FOOTBALL INTELLIGENCE  •  V${BuildConfig.VERSION_NAME}",color=muted,fontSize=12.sp,letterSpacing=1.sp)
+            }
+            if(selected == null) {
+                Column(Modifier.fillMaxSize().padding(horizontal=18.dp)) {
+                    Text("Maç merkezi",fontSize=25.sp,color=white,fontWeight=FontWeight.Bold)
+                    Text("Gerçek fikstürler • Kaynak bilgisiyle",color=muted,fontSize=13.sp)
+                    Spacer(Modifier.height(16.dp))
+                    Row(Modifier.horizontalScroll(rememberScrollState()),horizontalArrangement=Arrangement.spacedBy(8.dp)) {
+                        leagues.forEach { (code,name) -> FilterChip(selected=league==code,onClick={league=code},label={Text(name)},colors=FilterChipDefaults.filterChipColors(selectedContainerColor=surface2,selectedLabelColor=mint)) }
+                    }
+                    Spacer(Modifier.height(8.dp))
+                    Text("* İşaretli ligler için sağlayıcı API anahtarı gerekebilir.",color=muted,fontSize=11.sp)
+                    Spacer(Modifier.height(10.dp))
+                    OutlinedTextField(value=search,onValueChange={search=it},label={Text("Takım ara")},singleLine=true,modifier=Modifier.fillMaxWidth())
+                    Spacer(Modifier.height(10.dp))
+                    Button(onClick={refresh++},enabled=!loading && base.isNotBlank()) { Text("Fikstürü yenile") }
+                    if(loading) { Spacer(Modifier.height(12.dp));CircularProgressIndicator() }
+                    if(base.isBlank()) MessageCard("Kurulum bekleniyor","APK'ya HTTPS backend adresi eklenmemiş.")
+                    if(error != null) MessageCard("Bağlantı hatası",error ?: "")
+                    result?.let { data ->
+                        Spacer(Modifier.height(12.dp))
+                        Text("Kaynak: ${data.source}",color=mint,fontSize=12.sp)
+                        Text("Son veri alımı: ${local(data.fetched)}",color=muted,fontSize=11.sp)
+                        Spacer(Modifier.height(12.dp))
+                        val matches=data.matches.filter { it.status != "FINISHED" && (it.home.contains(search,true) || it.away.contains(search,true)) }
+                        if(matches.isEmpty()) MessageCard("Maç bulunamadı","Bu filtre için yaklaşan fikstür bulunamadı.")
+                        LazyColumn(verticalArrangement=Arrangement.spacedBy(10.dp),contentPadding=PaddingValues(bottom=24.dp)) {
+                            items(matches,key={it.id}) { m ->
+                                Card(Modifier.fillMaxWidth().clickable { selected=m },shape=RoundedCornerShape(16.dp),colors=CardDefaults.cardColors(containerColor=surface)) {
+                                    Column(Modifier.padding(16.dp)) {
+                                        Text(local(m.utc),color=mint,fontSize=12.sp)
+                                        Spacer(Modifier.height(8.dp))
+                                        Text("${m.home}  –  ${m.away}",color=white,fontWeight=FontWeight.Bold,fontSize=17.sp)
+                                        Text("Maç analizi  →",color=muted,fontSize=12.sp)
+                                    }
+                                }
+                            }
+                        }
                     }
                 }
             } else {
-                Text("Maç merkezi",style=MaterialTheme.typography.titleLarge,fontWeight=FontWeight.Bold,color=Color.White)
-                Text("Gerçek fikstürler • Kaynak bilgisiyle",color=muted,style=MaterialTheme.typography.bodySmall)
-                Spacer(Modifier.height(14.dp))
-                Row(Modifier.horizontalScroll(rememberScrollState()),horizontalArrangement=Arrangement.spacedBy(8.dp)) {
-                    leagues.forEach { (code,name) -> FilterChip(selected=league==code,onClick={league=code},label={Text(name)}) }
-                }
-                Spacer(Modifier.height(8.dp))
-                Text("* Bu ligler için sunucuda isteğe bağlı API anahtarı gerekir.",color=muted,style=MaterialTheme.typography.labelSmall)
-                Spacer(Modifier.height(12.dp))
-                OutlinedTextField(value=search,onValueChange={search=it},label={Text("Takım ara")},modifier=Modifier.fillMaxWidth(),singleLine=true)
-                Spacer(Modifier.height(12.dp))
-                Row(verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.spacedBy(12.dp)) {
-                    Button(onClick={refresh++},enabled=!loading && base.isNotBlank()) { Text("Fikstürü yenile") }
-                    if(loading) CircularProgressIndicator(Modifier.size(24.dp),strokeWidth=2.dp)
-                }
-                Spacer(Modifier.height(12.dp))
-                if(base.isBlank()) {
-                    Notice("Kurulum bekleniyor", "Bu APK henüz yayımlanmış bir backend adresi içermiyor. DEPLOY_V05.md dosyasındaki adımlarla sunucuyu kurup API_BASE_URL değerini tanımlayın.")
-                }
-                if(error != null) Notice("Veri alınamadı", "${error}. Bağlantıyı ve sunucu durumunu kontrol edip yeniden deneyin.")
-                val data = response
-                if(data != null) {
-                    Text("Kaynak: ${data.source}",color=accent,style=MaterialTheme.typography.labelMedium)
-                    Text("Son veri alımı: ${local(data.fetched)}",color=muted,style=MaterialTheme.typography.labelSmall)
-                    Spacer(Modifier.height(10.dp))
-                    val upcoming = data.matches.filter { it.status != "FINISHED" && (it.home.contains(search,true) || it.away.contains(search,true)) }
-                    if(upcoming.isEmpty()) Notice("Maç bulunamadı", "Bu ligde veya arama sonucunda yaklaşan fikstür bulunmuyor. Veri kaynağı eksik veya gecikmeli olabilir.")
-                    LazyColumn(verticalArrangement=Arrangement.spacedBy(10.dp)) {
-                        items(upcoming,key={it.id}) { m ->
-                            Card(modifier=Modifier.fillMaxWidth().clickable{selected=m},colors=CardDefaults.cardColors(containerColor=surface),shape=RoundedCornerShape(14.dp)) {
-                                Column(Modifier.padding(16.dp)) {
-                                    Text(local(m.utc),color=accent,style=MaterialTheme.typography.labelMedium)
-                                    Spacer(Modifier.height(6.dp))
-                                    Text("${m.home} – ${m.away}",color=Color.White,fontWeight=FontWeight.Bold)
-                                    Text("Maç ayrıntısı →",color=muted,style=MaterialTheme.typography.bodySmall)
+                val match=selected!!
+                var tab by remember(match.id) { mutableStateOf(0) }
+                Column(Modifier.fillMaxSize()) {
+                    TextButton(onClick={selected=null},modifier=Modifier.padding(start=10.dp)) { Text("← Maç listesine dön",color=mint) }
+                    LazyColumn(Modifier.fillMaxSize(),contentPadding=PaddingValues(start=16.dp,end=16.dp,bottom=32.dp),verticalArrangement=Arrangement.spacedBy(14.dp)) {
+                        item { MatchHero(match,league) }
+                        item {
+                            Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),horizontalArrangement=Arrangement.spacedBy(8.dp)) {
+                                listOf("Analiz","İstatistikler","Tahminler","Kadrolar","H2H").forEachIndexed { i,label ->
+                                    FilterChip(selected=tab==i,onClick={tab=i},label={Text(label)},colors=FilterChipDefaults.filterChipColors(selectedContainerColor=surface2,selectedLabelColor=mint))
                                 }
+                            }
+                        }
+                        if(analysisLoading) item { Panel { Row(verticalAlignment=Alignment.CenterVertically) { CircularProgressIndicator(Modifier.size(22.dp));Spacer(Modifier.width(12.dp));Text("Geçmiş maçlar analiz ediliyor...",color=white) } } }
+                        else if(analysisError != null) item { MessageCard("Analiz alınamadı",analysisError ?: "") }
+                        else if(estimate == null) item { MessageCard("Yeterli veri yok","Bu maç için doğrulanabilir geçmiş sonuçlar yeterli değil. Tahmin yüzdeleri gösterilmiyor.") }
+                        else {
+                            val a=estimate!!
+                            when(tab) {
+                                0,2 -> {
+                                    item { Panel { Text("Kazanma olasılıkları (1X2)",color=white,fontWeight=FontWeight.Bold,fontSize=17.sp);Spacer(Modifier.height(14.dp));Row(horizontalArrangement=Arrangement.spacedBy(8.dp)) { ProbabilityTile("Ev sahibi",a.home,mint,Modifier.weight(1f));ProbabilityTile("Beraberlik",a.draw,muted,Modifier.weight(1f));ProbabilityTile("Deplasman",a.away,purple,Modifier.weight(1f)) } } }
+                                    item { Row(horizontalArrangement=Arrangement.spacedBy(10.dp)) { Panel(Modifier.weight(1f)) { Text("Çifte şans",color=white,fontWeight=FontWeight.Bold);Spacer(Modifier.height(10.dp));BarLine("1X",a.home+a.draw,mint);BarLine("X2",a.draw+a.away,muted);BarLine("12",a.home+a.away,purple) };Panel(Modifier.weight(1f)) { Text("Toplam gol (2.5)",color=white,fontWeight=FontWeight.Bold);Spacer(Modifier.height(10.dp));BarLine("Üst",a.over,mint);BarLine("Alt",a.under,muted) } } }
+                                    item { Panel { Text("Karşılıklı gol (KG)",color=white,fontWeight=FontWeight.Bold);Spacer(Modifier.height(12.dp));Row(horizontalArrangement=Arrangement.spacedBy(10.dp)) { ProbabilityTile("Var",a.btts,mint,Modifier.weight(1f));ProbabilityTile("Yok",1-a.btts,muted,Modifier.weight(1f)) } } }
+                                    item { Panel { Text("Analiz özeti",color=mint,fontWeight=FontWeight.Bold,fontSize=18.sp);Spacer(Modifier.height(8.dp));Text("Gerçek geçmiş maç sonuçlarından hesaplanan araştırma olasılıkları. xG veya doğrulanmış Elo modeli değildir.",color=white);Spacer(Modifier.height(10.dp));Text("Örnek sayısı: ${match.home}: ${a.homeSample} • ${match.away}: ${a.awaySample}",color=muted,fontSize=13.sp);Text("Model: ${a.method}",color=muted,fontSize=12.sp);Text("Kaynak: ${result?.source ?: "Bilinmiyor"}",color=muted,fontSize=12.sp);Text("Tahminler garanti içermez; güven puanı hesaplanmamıştır.",color=muted,fontSize=12.sp) } }
+                                }
+                                1 -> item { Panel { Text("Beklenen gol ortalaması (model)",color=white,fontWeight=FontWeight.Bold);Spacer(Modifier.height(10.dp));Text("${match.home}: ${a.homeGoals?.let { String.format(Locale.US,"%.2f",it) } ?: "Veri yok"}",color=mint);Text("${match.away}: ${a.awayGoals?.let { String.format(Locale.US,"%.2f",it) } ?: "Veri yok"}",color=purple);Spacer(Modifier.height(8.dp));Text("Bu değerler geçmiş skorlarla hesaplanan Poisson parametreleridir, xG değildir.",color=muted,fontSize=12.sp) } }
+                                else -> item { MessageCard(if(tab==3) "Kadro bilgisi mevcut değil" else "İkili rekabet verisi mevcut değil","Bu bölüm için doğrulanmış veri kaynağı henüz bağlı değil. Bilgi uydurulmuyor.") }
                             }
                         }
                     }
@@ -179,13 +181,47 @@ class MainActivity:ComponentActivity() {
         }
     }
 }
-
-@Composable private fun Notice(title:String,message:String) {
-    Card(colors=CardDefaults.cardColors(containerColor=surface),modifier=Modifier.fillMaxWidth()) {
-        Column(Modifier.padding(16.dp)) {
-            Text(title,color=accent,fontWeight=FontWeight.Bold)
-            Spacer(Modifier.height(5.dp))
-            Text(message,color=Color.White,style=MaterialTheme.typography.bodyMedium)
+@Composable private fun MatchHero(m:Match,league:String) {
+    Panel {
+        Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.SpaceBetween,verticalAlignment=Alignment.CenterVertically) {
+            Text(if(league=="BL1") "BUNDESLIGA" else if(league=="BL2") "2. BUNDESLIGA" else league,color=mint,fontSize=12.sp,fontWeight=FontWeight.Bold)
+            Text(local(m.utc),color=muted,fontSize=12.sp)
         }
+        Spacer(Modifier.height(18.dp))
+        Row(Modifier.fillMaxWidth(),verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.SpaceBetween) {
+            Team(m.home,Modifier.weight(1f))
+            Text("VS",color=muted,fontSize=21.sp,fontWeight=FontWeight.Black,modifier=Modifier.padding(horizontal=8.dp))
+            Team(m.away,Modifier.weight(1f))
+        }
+        Spacer(Modifier.height(16.dp))
+        Text("Durum: ${m.status}  •  Gerçek fikstür",color=muted,fontSize=12.sp)
     }
 }
+@Composable private fun Team(name:String,modifier:Modifier=Modifier) {
+    Column(modifier,horizontalAlignment=Alignment.CenterHorizontally) {
+        Box(Modifier.size(62.dp).clip(CircleShape).background(surface2).border(1.dp,mint.copy(alpha=.4f),CircleShape),contentAlignment=Alignment.Center) {
+            Text(name.split(" ").filter { it.isNotBlank() }.take(2).joinToString("") { it.take(1) }.uppercase(Locale.ROOT),color=white,fontWeight=FontWeight.Black,fontSize=20.sp)
+        }
+        Spacer(Modifier.height(9.dp))
+        Text(name,color=white,fontWeight=FontWeight.Bold,fontSize=15.sp,textAlign=TextAlign.Center,maxLines=3,overflow=TextOverflow.Ellipsis)
+    }
+}
+@Composable private fun Panel(modifier:Modifier=Modifier,content:@Composable ColumnScope.()->Unit) {
+    Card(modifier.fillMaxWidth(),shape=RoundedCornerShape(18.dp),colors=CardDefaults.cardColors(containerColor=surface)) { Column(Modifier.padding(16.dp),content=content) }
+}
+@Composable private fun ProbabilityTile(title:String,value:Double,color:Color,modifier:Modifier=Modifier) {
+    Column(modifier.clip(RoundedCornerShape(12.dp)).background(surface2).border(1.dp,color.copy(alpha=.5f),RoundedCornerShape(12.dp)).padding(10.dp),horizontalAlignment=Alignment.CenterHorizontally) {
+        Text(title,color=muted,fontSize=11.sp,maxLines=1)
+        Text(percentage(value),color=color,fontSize=20.sp,fontWeight=FontWeight.Bold)
+        Spacer(Modifier.height(7.dp))
+        LinearProgressIndicator(progress={value.toFloat().coerceIn(0f,1f)},modifier=Modifier.fillMaxWidth().height(5.dp).clip(CircleShape),color=color,trackColor=bg)
+    }
+}
+@Composable private fun BarLine(title:String,value:Double,color:Color) {
+    Row(verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.spacedBy(5.dp),modifier=Modifier.padding(vertical=6.dp)) {
+        Text(title,color=white,fontSize=12.sp,modifier=Modifier.width(30.dp))
+        LinearProgressIndicator(progress={value.toFloat().coerceIn(0f,1f)},modifier=Modifier.weight(1f).height(7.dp).clip(CircleShape),color=color,trackColor=surface2)
+        Text(percentage(value),color=color,fontSize=11.sp,modifier=Modifier.width(43.dp),textAlign=TextAlign.End)
+    }
+}
+@Composable private fun MessageCard(title:String,detail:String) { Panel { Text(title,color=mint,fontWeight=FontWeight.Bold);Spacer(Modifier.height(6.dp));Text(detail,color=white) } }
