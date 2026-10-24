@@ -6,7 +6,11 @@ from urllib.request import Request, urlopen
 from urllib.error import HTTPError, URLError
 
 API = 'https://api.openligadb.de'
-LEAGUES = {'BL1': 'bl1', 'BL2': 'bl2'}
+# Curated shortcuts checked against OpenLigaDB's 2026 league catalogue.
+# These are NOT claimed to cover every Id daa competition or every betting market.
+LEAGUES = {'BL1':'bl1','BL2':'bl2','BL3':'bl3','UCL':'ucl','DFB':'dfb',
+           'PLFREE':'pl','LALIGA':'la1','UEL':'uel2026','WBL':'ffb1',
+           'NLA':'nla','RLN':'rln','RLNO':'rlno'}
 _cache = {}
 
 class OpenLigaError(Exception):

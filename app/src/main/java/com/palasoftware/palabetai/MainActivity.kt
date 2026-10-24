@@ -41,7 +41,7 @@ private val mint = Color(0xFF34D6A1)
 private val purple = Color(0xFFB375F5)
 private val muted = Color(0xFFA9BBC7)
 private val white = Color(0xFFF5F8FC)
-private val leagues = listOf("BL1" to "Bundesliga", "BL2" to "2. Bundesliga", "PL" to "Premier League*", "PD" to "La Liga*", "SA" to "Serie A*", "FL1" to "Ligue 1*")
+private val leagues = listOf("BL1" to "Bundesliga", "BL2" to "2. Bundesliga", "BL3" to "3. Liga", "UCL" to "Şampiyonlar Ligi", "UEL" to "Avrupa Ligi", "DFB" to "Almanya Kupası", "PLFREE" to "Premier League (topluluk)", "LALIGA" to "La Liga (topluluk)", "WBL" to "Kadınlar Bundesliga", "NLA" to "Uluslar Ligi A", "RLN" to "Regionalliga Nord", "RLNO" to "Regionalliga Nordost", "PL" to "Premier League*", "PD" to "La Liga*", "SA" to "Serie A*", "FL1" to "Ligue 1*")
 private data class Match(val id:String,val home:String,val away:String,val utc:String,val status:String)
 private data class Fixtures(val matches:List<Match>,val source:String,val fetched:String)
 private data class Analysis(val home:Double,val draw:Double,val away:Double,val btts:Double,val over:Double,val under:Double,val homeSample:Int,val awaySample:Int,val homeGoals:Double?,val awayGoals:Double?,val method:String)
@@ -97,7 +97,7 @@ class MainActivity:ComponentActivity() {
     LaunchedEffect(selected?.id,league) {
         estimate=null;analysisError=null
         val m=selected ?: return@LaunchedEffect
-        if(base.isBlank() || league !in listOf("BL1","BL2")) return@LaunchedEffect
+        if(base.isBlank() || league !in listOf("BL1","BL2","BL3","UCL","UEL","DFB","PLFREE","LALIGA","WBL","NLA","RLN","RLNO")) return@LaunchedEffect
         analysisLoading=true
         try { estimate=analysis(base,league,m.id) } catch(e:Exception) { analysisError=e.message ?: "Analiz alınamadı" } finally { analysisLoading=false }
     }
@@ -116,7 +116,7 @@ class MainActivity:ComponentActivity() {
                         leagues.forEach { (code,name) -> FilterChip(selected=league==code,onClick={league=code},label={Text(name)},colors=FilterChipDefaults.filterChipColors(selectedContainerColor=surface2,selectedLabelColor=mint)) }
                     }
                     Spacer(Modifier.height(8.dp))
-                    Text("* İşaretli ligler için sağlayıcı API anahtarı gerekebilir.",color=muted,fontSize=11.sp)
+                    Text("Türkiye ligleri: doğrulanmış ücretsiz güncel veri bulunamadı. * API anahtarı gerektirir.",color=muted,fontSize=11.sp)
                     Spacer(Modifier.height(10.dp))
                     OutlinedTextField(value=search,onValueChange={search=it},label={Text("Takım ara")},singleLine=true,modifier=Modifier.fillMaxWidth())
                     Spacer(Modifier.height(10.dp))
@@ -184,7 +184,7 @@ class MainActivity:ComponentActivity() {
 @Composable private fun MatchHero(m:Match,league:String) {
     Panel {
         Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.SpaceBetween,verticalAlignment=Alignment.CenterVertically) {
-            Text(if(league=="BL1") "BUNDESLIGA" else if(league=="BL2") "2. BUNDESLIGA" else league,color=mint,fontSize=12.sp,fontWeight=FontWeight.Bold)
+            Text(if(league=="BL1") "BUNDESLIGA" else if(league=="BL2") "2. BUNDESLIGA" else leagues.firstOrNull { it.first==league }?.second ?: league,color=mint,fontSize=12.sp,fontWeight=FontWeight.Bold)
             Text(local(m.utc),color=muted,fontSize=12.sp)
         }
         Spacer(Modifier.height(18.dp))

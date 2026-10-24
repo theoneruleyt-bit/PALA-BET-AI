@@ -2,10 +2,13 @@ from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, Field
 from .model import predict, elo_expected, fair_odds
 from .football_data import get_matches as get_football_data_matches, ProviderError
-from .openligadb import get_matches as get_openliga_matches, get_raw_matches, OpenLigaError
+from .openligadb import get_matches as get_openliga_matches, get_raw_matches, OpenLigaError, LEAGUES
 from .analysis_v06 import normalize, estimate, backtest
+from .markets import extra_markets
 
-app = FastAPI(title='PALA BET AI - Research API', version='0.6.0')
+FREE_LEAGUE_NAMES = {'BL1':'Bundesliga','BL2':'2. Bundesliga','BL3':'3. Liga','UCL':'Şampiyonlar Ligi','DFB':'Almanya Kupası','PLFREE':'Premier League (topluluk)','LALIGA':'La Liga (topluluk)','UEL':'Avrupa Ligi','WBL':'Kadınlar Bundesliga','NLA':'Uluslar Ligi A','RLN':'Regionalliga Nord','RLNO':'Regionalliga Nordost'}
+
+app = FastAPI(title='PALA BET AI - Research API', version='1.0.0')
 
 class MatchInput(BaseModel):
     home_xg: float = Field(ge=0.05, le=8)
@@ -15,11 +18,11 @@ class MatchInput(BaseModel):
 
 @app.get('/health')
 def health():
-    return {'status':'ok','version':'0.6.0','mode':'research','keyless_leagues':['BL1','BL2']}
+    return {'status':'ok','version':'1.0.0','mode':'research','keyless_leagues':list(LEAGUES)}
 
 @app.get('/leagues')
 def leagues():
-    return {'keyless':[{'code':'BL1','name':'Bundesliga'},{'code':'BL2','name':'2. Bundesliga'}], 'optional_token':['PL','PD','SA','FL1'], 'note':'Optional leagues require server-side FOOTBALL_DATA_API_KEY.'}
+    return {'keyless':[{'code':code,'name':name} for code,name in FREE_LEAGUE_NAMES.items()], 'optional_token':['PL','PD','SA','FL1'], 'note':'Only curated leagues with public OpenLigaDB shortcuts. Availability and completeness may vary. Turkish leagues not verified.'}
 
 @app.post('/analyze')
 def analyze(data: MatchInput):
@@ -29,7 +32,7 @@ def analyze(data: MatchInput):
 @app.get('/fixtures/{competition}')
 def fixtures(competition: str):
     try:
-        if competition in ('BL1','BL2'):
+        if competition in LEAGUES:
             return get_openliga_matches(competition)
         if competition in ('PL','PD','SA','FL1'):
             return get_football_data_matches(competition)
@@ -40,8 +43,8 @@ def fixtures(competition: str):
 
 @app.get('/research/{competition}/{match_id}')
 def research(competition: str, match_id: str):
-    if competition not in ('BL1','BL2'):
-        raise HTTPException(status_code=400, detail='Research available for BL1 and BL2 only')
+    if competition not in LEAGUES:
+        raise HTTPException(status_code=400, detail='Research not available for this competition')
     try:
         raw = get_raw_matches(competition)
     except OpenLigaError as exc:
@@ -54,4 +57,4 @@ def research(competition: str, match_id: str):
     before = target.get('matchDateTimeUTC')
     history = normalize(raw)
     result = estimate(history, home, away, before=before) if home and away and before else None
-    return {'source':'OpenLigaDB (community data)', 'competition':competition, 'match_id':match_id, 'status':'estimated' if result else 'insufficient_data', 'analysis':result, 'validation':backtest(history), 'note':'Research-only estimates; past match scores are not xG. Data may be incomplete.'}
+    return {'source':'OpenLigaDB (community data)', 'competition':competition, 'match_id':match_id, 'status':'estimated' if result else 'insufficient_data', 'analysis':result, 'markets':extra_markets(result) if result else None, 'validation':backtest(history), 'note':'Research-only estimates; past match scores are not xG. Data may be incomplete.'}
