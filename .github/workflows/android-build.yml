@@ -8,7 +8,7 @@ on:
 
 jobs:
   build:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
 
     defaults:
       run:
@@ -24,8 +24,12 @@ jobs:
           distribution: temurin
           java-version: '17'
 
-      - name: Set up Android SDK
-        uses: android-actions/setup-android@v3
+      - name: Check Android SDK
+        run: |
+          echo "ANDROID_HOME=$ANDROID_HOME"
+          test -d "$ANDROID_HOME"
+          ls "$ANDROID_HOME/platforms"
+          ls "$ANDROID_HOME/build-tools"
 
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v4
@@ -33,11 +37,11 @@ jobs:
           gradle-version: '8.9'
 
       - name: Build Debug APK
-        run: gradle assembleDebug --stacktrace
+        run: gradle :app:assembleDebug --stacktrace
 
-      - name: Upload APK
+      - name: Upload Debug APK
         uses: actions/upload-artifact@v4
         with:
-          name: PALA-BET-AI-Debug-APK
+          name: PALA-BET-AI-V0.1-APK
           path: android/app/build/outputs/apk/debug/*.apk
           if-no-files-found: error
