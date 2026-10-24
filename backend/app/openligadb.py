@@ -20,7 +20,7 @@ def get_matches(competition='BL1', *, fetch=None, now=None, ttl=300, season=None
     key = (competition, year)
     if key in _cache and now - _cache[key][0] < ttl:
         return {**_cache[key][1], 'cache': 'hit'}
-    request = Request(f'{API}/getmatchdata/{LEAGUES[competition]}/{year}', headers={'Accept':'application/json','User-Agent':'PalaBetAI/0.5'})
+    request = Request(f'{API}/getmatchdata/{LEAGUES[competition]}/{year}', headers={'Accept':'application/json','User-Agent':'PalaBetAI/0.6'})
     try:
         if fetch is None:
             with urlopen(request, timeout=12) as response:
@@ -48,3 +48,22 @@ def get_matches(competition='BL1', *, fetch=None, now=None, ttl=300, season=None
     result = {'source':'OpenLigaDB (community data)', 'mode':'provider', 'fetched_at':datetime.fromtimestamp(now, timezone.utc).isoformat().replace('+00:00','Z'), 'competition':competition, 'matches':matches, 'cache':'miss', 'disclaimer':'Schedules are provided by a community data service and may be delayed or incomplete. No prediction is implied.'}
     _cache[key] = (now, result)
     return result
+
+
+def get_raw_matches(competition='BL1', *, fetch=None, now=None, season=None):
+    """Season history for research; no prediction from unverified fixture names."""
+    if competition not in LEAGUES:
+        raise ValueError('Unsupported keyless league')
+    now = time.time() if now is None else now
+    dt = datetime.fromtimestamp(now, timezone.utc)
+    year = season if season is not None else dt.year - (1 if dt.month < 7 else 0)
+    request = Request(f'{API}/getmatchdata/{LEAGUES[competition]}/{year}', headers={'Accept':'application/json','User-Agent':'PalaBetAI/0.6'})
+    try:
+        if fetch is None:
+            with urlopen(request, timeout=12) as response: raw = response.read()
+        else: raw = fetch(request)
+        result = json.loads(raw)
+        if not isinstance(result, list): raise ValueError('Unexpected response')
+        return result
+    except (HTTPError, URLError, TimeoutError, ValueError, TypeError) as exc:
+        raise OpenLigaError('Historical data unavailable') from exc

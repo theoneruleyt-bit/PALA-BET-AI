@@ -55,6 +55,25 @@ private suspend fun fetch(base:String,league:String):Result = withContext(Dispat
     } finally { conn.disconnect() }
 }
 
+private data class Research(val status:String, val details:String)
+private suspend fun fetchResearch(base:String, league:String, id:String):Research = withContext(Dispatchers.IO) {
+    val conn = URL("${base.trimEnd('/')}/research/$league/$id").openConnection() as HttpURLConnection
+    conn.connectTimeout = 15000
+    conn.readTimeout = 20000
+    try {
+        if (conn.responseCode != 200) throw IllegalStateException("Analiz HTTP ${conn.responseCode}")
+        val json = JSONObject(conn.inputStream.bufferedReader().use { it.readText() })
+        val analysis = json.optJSONObject("analysis")
+        if (analysis == null) Research("insufficient_data", "Yeterli geçmiş maç verisi bulunamadı. Tahmin üretilmedi.")
+        else {
+            val p = analysis.getJSONObject("probabilities")
+            fun pct(k:String) = String.format(java.util.Locale.US,"%.1f%%",p.getDouble(k)*100)
+            val n = analysis.getJSONObject("sample")
+            Research("estimated", "1: ${pct("home")}   X: ${pct("draw")}   2: ${pct("away")}\nKG Var: ${pct("btts")}\n2.5 Üst: ${pct("over25")}   Alt: ${pct("under25")}\nSon maç örnekleri: ${n.getInt("home")} / ${n.getInt("away")}\nYöntem: Geçmiş gol ortalamaları + Poisson. xG değildir; garanti içermez.")
+        }
+    } finally { conn.disconnect() }
+}
+
 class MainActivity:ComponentActivity() {
     override fun onCreate(savedInstanceState:Bundle?) { super.onCreate(savedInstanceState); setContent { Screen() } }
 }
@@ -67,6 +86,18 @@ class MainActivity:ComponentActivity() {
     var error by remember { mutableStateOf<String?>(null) }
     var selected by remember { mutableStateOf<Match?>(null) }
     var loading by remember { mutableStateOf(false) }
+    var research by remember { mutableStateOf<Research?>(null) }
+    var researchError by remember { mutableStateOf<String?>(null) }
+    var researchLoading by remember { mutableStateOf(false) }
+    LaunchedEffect(selected?.id, league) {
+        research = null; researchError = null
+        val m = selected ?: return@LaunchedEffect
+        if (base.isBlank() || league !in listOf("BL1","BL2")) return@LaunchedEffect
+        researchLoading = true
+        try { research = fetchResearch(base,league,m.id) }
+        catch (e:Exception) { researchError = e.message ?: "Analiz alınamadı" }
+        finally { researchLoading = false }
+    }
     var refresh by remember { mutableIntStateOf(0) }
     LaunchedEffect(league,refresh) {
         selected = null
@@ -93,7 +124,12 @@ class MainActivity:ComponentActivity() {
                     Column(Modifier.padding(18.dp)) {
                         Text("GERÇEK FİKSTÜR",color=accent,fontWeight=FontWeight.Bold)
                         Spacer(Modifier.height(8.dp))
-                        Text("Bu maç için doğrulanmış geçmiş performans ve kadro verileri bulunmadan tahmin yüzdesi üretilmez.",color=Color.White)
+                        Text("ARAŞTIRMA TAHMİNİ • V0.6",color=accent,fontWeight=FontWeight.Bold)
+                        Spacer(Modifier.height(8.dp))
+                        if(researchLoading) CircularProgressIndicator(Modifier.size(24.dp))
+                        if(research != null) Text(research!!.details,color=Color.White)
+                        else if(researchError != null) Text("Analiz alınamadı: $researchError",color=muted)
+                        else Text("Bu lig veya maç için doğrulanabilir geçmiş veri yok; tahmin gösterilmiyor.",color=Color.White)
                         Spacer(Modifier.height(8.dp))
                         Text("Kaynak: ${response?.source ?: "Bilinmiyor"}",color=muted,style=MaterialTheme.typography.bodySmall)
                     }

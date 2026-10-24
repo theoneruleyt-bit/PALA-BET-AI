@@ -2,9 +2,10 @@ from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, Field
 from .model import predict, elo_expected, fair_odds
 from .football_data import get_matches as get_football_data_matches, ProviderError
-from .openligadb import get_matches as get_openliga_matches, OpenLigaError
+from .openligadb import get_matches as get_openliga_matches, get_raw_matches, OpenLigaError
+from .analysis_v06 import normalize, estimate, backtest
 
-app = FastAPI(title='PALA BET AI - Research API', version='0.5.0')
+app = FastAPI(title='PALA BET AI - Research API', version='0.6.0')
 
 class MatchInput(BaseModel):
     home_xg: float = Field(ge=0.05, le=8)
@@ -14,7 +15,7 @@ class MatchInput(BaseModel):
 
 @app.get('/health')
 def health():
-    return {'status':'ok','version':'0.5.0','mode':'research','keyless_leagues':['BL1','BL2']}
+    return {'status':'ok','version':'0.6.0','mode':'research','keyless_leagues':['BL1','BL2']}
 
 @app.get('/leagues')
 def leagues():
@@ -35,3 +36,22 @@ def fixtures(competition: str):
         raise HTTPException(status_code=400, detail='Unsupported competition')
     except (OpenLigaError, ProviderError) as exc:
         raise HTTPException(status_code=503, detail='Fixture provider unavailable or not configured') from exc
+
+
+@app.get('/research/{competition}/{match_id}')
+def research(competition: str, match_id: str):
+    if competition not in ('BL1','BL2'):
+        raise HTTPException(status_code=400, detail='Research available for BL1 and BL2 only')
+    try:
+        raw = get_raw_matches(competition)
+    except OpenLigaError as exc:
+        raise HTTPException(status_code=503, detail='Historical provider unavailable') from exc
+    target = next((m for m in raw if str(m.get('matchID')) == match_id), None)
+    if target is None:
+        raise HTTPException(status_code=404, detail='Match not found')
+    home = (target.get('team1') or {}).get('teamName')
+    away = (target.get('team2') or {}).get('teamName')
+    before = target.get('matchDateTimeUTC')
+    history = normalize(raw)
+    result = estimate(history, home, away, before=before) if home and away and before else None
+    return {'source':'OpenLigaDB (community data)', 'competition':competition, 'match_id':match_id, 'status':'estimated' if result else 'insufficient_data', 'analysis':result, 'validation':backtest(history), 'note':'Research-only estimates; past match scores are not xG. Data may be incomplete.'}
