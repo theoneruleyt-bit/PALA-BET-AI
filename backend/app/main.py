@@ -5,10 +5,12 @@ from .football_data import get_matches as get_football_data_matches, ProviderErr
 from .openligadb import get_matches as get_openliga_matches, get_raw_matches, OpenLigaError, LEAGUES, discover_turkish_leagues, dynamic_fixtures, get_dynamic_raw
 from .analysis_v06 import normalize, estimate, backtest
 from .markets import extra_markets
+from .turkey import fixtures as turkey_fixtures, raw_matches as turkey_raw, TurkeyFeedError
+from .event_stats import get_event_estimates
 
 FREE_LEAGUE_NAMES = {'BL1':'Bundesliga','BL2':'2. Bundesliga','BL3':'3. Liga','UCL':'Şampiyonlar Ligi','DFB':'Almanya Kupası','PLFREE':'Premier League (topluluk)','LALIGA':'La Liga (topluluk)','UEL':'Avrupa Ligi','WBL':'Kadınlar Bundesliga','NLA':'Uluslar Ligi A','RLN':'Regionalliga Nord','RLNO':'Regionalliga Nordost'}
 
-app = FastAPI(title='PALA BET AI - Research API', version='1.0.0')
+app = FastAPI(title='PALA BET AI - Research API', version='1.2.0')
 
 class MatchInput(BaseModel):
     home_xg: float = Field(ge=0.05, le=8)
@@ -18,11 +20,11 @@ class MatchInput(BaseModel):
 
 @app.get('/health')
 def health():
-    return {'status':'ok','version':'1.0.0','mode':'research','keyless_leagues':list(LEAGUES)}
+    return {'status':'ok','version':'1.2.0','mode':'research','keyless_leagues':list(LEAGUES)}
 
 @app.get('/leagues')
 def leagues():
-    return {'keyless':[{'code':code,'name':name} for code,name in FREE_LEAGUE_NAMES.items()], 'turkish_discovery':_turkish_catalog(), 'optional_token':['PL','PD','SA','FL1'], 'note':'Only curated leagues with public OpenLigaDB shortcuts. Availability and completeness may vary. Turkish leagues not verified.'}
+    return {'keyless':[{'code':'TR1','name':'Türkiye Süper Lig 2026/27','provider':'FixtureDownload'}]+[{'code':code,'name':name} for code,name in FREE_LEAGUE_NAMES.items()], 'turkish_discovery':[], 'optional_token':['PL','PD','SA','FL1'], 'note':'Only curated leagues with public OpenLigaDB shortcuts. Availability and completeness may vary. Turkish leagues not verified.'}
 
 def _turkish_catalog():
     try: return discover_turkish_leagues()
@@ -36,6 +38,8 @@ def analyze(data: MatchInput):
 @app.get('/fixtures/{competition}')
 def fixtures(competition: str):
     try:
+        if competition == 'TR1':
+            return turkey_fixtures()
         if competition in LEAGUES:
             return get_openliga_matches(competition)
         if competition.startswith('TR:'):
@@ -43,17 +47,17 @@ def fixtures(competition: str):
         if competition in ('PL','PD','SA','FL1'):
             return get_football_data_matches(competition)
         raise HTTPException(status_code=400, detail='Unsupported competition')
-    except (OpenLigaError, ProviderError) as exc:
+    except (OpenLigaError, ProviderError, TurkeyFeedError) as exc:
         raise HTTPException(status_code=503, detail='Fixture provider unavailable or not configured') from exc
 
 
 @app.get('/research/{competition}/{match_id}')
 def research(competition: str, match_id: str):
-    if competition not in LEAGUES and not competition.startswith('TR:'):
+    if competition != 'TR1' and competition not in LEAGUES and not competition.startswith('TR:'):
         raise HTTPException(status_code=400, detail='Research not available for this competition')
     try:
-        raw = get_dynamic_raw(competition) if competition.startswith('TR:') else get_raw_matches(competition)
-    except OpenLigaError as exc:
+        raw = turkey_raw() if competition == 'TR1' else (get_dynamic_raw(competition) if competition.startswith('TR:') else get_raw_matches(competition))
+    except (OpenLigaError, TurkeyFeedError) as exc:
         raise HTTPException(status_code=503, detail='Historical provider unavailable') from exc
     target = next((m for m in raw if str(m.get('matchID')) == match_id), None)
     if target is None:
@@ -63,4 +67,4 @@ def research(competition: str, match_id: str):
     before = target.get('matchDateTimeUTC')
     history = normalize(raw)
     result = estimate(history, home, away, before=before) if home and away and before else None
-    return {'source':'OpenLigaDB (community data)', 'competition':competition, 'match_id':match_id, 'status':'estimated' if result else 'insufficient_data', 'analysis':result, 'markets':extra_markets(result) if result else None, 'validation':backtest(history), 'event_markets':{'corners':{'status':'unavailable','reason':'No verified corner event history'},'yellow_cards':{'status':'unavailable','reason':'No verified card event history'},'red_cards':{'status':'unavailable','reason':'No verified red-card event history'},'penalties':{'status':'unavailable','reason':'No verified penalty event history'}}, 'note':'Research-only estimates; past match scores are not xG. Data may be incomplete.'}
+    return {'source':'FixtureDownload 2026/27' if competition == 'TR1' else 'OpenLigaDB (community data)', 'competition':competition, 'match_id':match_id, 'status':'estimated' if result else 'insufficient_data', 'analysis':result, 'markets':extra_markets(result) if result else None, 'validation':backtest(history), 'event_markets':get_event_estimates(home, away) if competition == 'TR1' else {'corners':{'status':'unavailable'},'yellow_cards':{'status':'unavailable'},'red_cards':{'status':'unavailable'},'penalties':{'status':'unavailable'}}, 'note':'Research-only estimates; past match scores are not xG. Data may be incomplete.'}
