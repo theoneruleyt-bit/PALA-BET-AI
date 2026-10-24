@@ -1,14 +1,19 @@
-# PALA BET AI V0.3 — Provider Foundation
+# PALA BET AI V0.4
 
-- Android versionCode 3, versionName 0.3.0; explicit DEMO data provenance on analysis screen.
-- Backend `GET /fixtures/{competition}` with optional football-data.org API integration.
-- Backend API key is read only from `FOOTBALL_DATA_API_KEY` environment variable, never shipped in the APK.
-- 5-minute in-process cache and controlled provider failure responses.
-- Provider adapter unit tests using mock transport (no network needed).
-- Updated Android GitHub Actions artifact name.
+Android (Jetpack Compose) + FastAPI research backend.
 
-**Scope limit:** The Android app still uses demo fixtures and on-device Poisson calculations. The backend endpoint is NOT yet connected to the Android UI. No claim of live odds or verified predictive accuracy.
+## Android
+Build via `.github/workflows/android-build.yml` on GitHub Actions. Debug APK artifact: `PALA-BET-AI-V0.4-APK`.
 
-**Repo cleanup:** The repository currently contains both root `app/`, `backend/` and a nested `PALA-BET-AI/` copy. Upload the ZIP contents into repository ROOT, then remove only the nested `PALA-BET-AI/` folder after verifying it is an obsolete duplicate. Do not delete root `app/`, `backend/` or `.github/`.
+## Backend (server)
+```bash
+cd backend
+python -m pip install -r requirements.txt
+export FOOTBALL_DATA_API_KEY=YOUR_TOKEN
+uvicorn app.main:app --host 0.0.0.0 --port 8000
+```
+For Windows CMD use `set FOOTBALL_DATA_API_KEY=YOUR_TOKEN`. Expose backend through an HTTPS host before entering its public base URL into the Android app. Never commit API tokens to GitHub.
 
-**Provider setup:** Configure `FOOTBALL_DATA_API_KEY` only on the backend server environment. Do not commit secrets or insert them in Android code. No paid plan required for offline demo mode.
+`GET /health` checks status. `GET /fixtures/PL` returns real scheduled fixtures from football-data.org if the provider is configured. Demo predictions are separate from real fixtures.
+
+See `V0_4_RELEASE_NOTES.md` for limits.
