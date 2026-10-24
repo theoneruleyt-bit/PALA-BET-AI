@@ -35,9 +35,11 @@ jobs:
       - name: Build Debug APK
         run: gradle :app:assembleDebug --stacktrace
 
+
       - name: Upload Debug APK
         uses: actions/upload-artifact@v4
         with:
           name: PALA-BET-AI-V0.1-APK
-          path: android/app/build/outputs/apk/debug/*.apk
+          path: app/build/outputs/apk/debug/*.apk
           if-no-files-found: error
+
