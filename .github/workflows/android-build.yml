@@ -20,6 +20,6 @@ jobs:
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: PALA-BET-AI-V0.4-APK
+          name: PALA-BET-AI-V0.5-APK
           path: app/build/outputs/apk/debug/*.apk
           if-no-files-found: error

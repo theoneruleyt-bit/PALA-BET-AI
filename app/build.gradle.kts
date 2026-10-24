@@ -2,11 +2,12 @@ plugins { id("com.android.application"); id("org.jetbrains.kotlin.android"); id(
 android {
  namespace = "com.palasoftware.palabetai"
  compileSdk = 35
- defaultConfig { applicationId = "com.palasoftware.palabetai"; minSdk = 26; targetSdk = 35; versionCode = 4; versionName = "0.4.0" }
+ defaultConfig { applicationId = "com.palasoftware.palabetai"; minSdk = 26; targetSdk = 35; versionCode = 5; versionName = "0.5.0" }
  buildTypes { release { isMinifyEnabled = false } }
  compileOptions { sourceCompatibility = JavaVersion.VERSION_17; targetCompatibility = JavaVersion.VERSION_17 }
  kotlinOptions { jvmTarget = "17" }
- buildFeatures { compose = true }
+ buildFeatures { compose = true; buildConfig = true }
+ defaultConfig { buildConfigField("String", "API_BASE_URL", "\"\"") }
 }
 dependencies {
  implementation(platform("androidx.compose:compose-bom:2024.12.01"))
