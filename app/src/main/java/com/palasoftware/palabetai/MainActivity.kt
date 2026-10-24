@@ -131,7 +131,7 @@ class MainActivity:ComponentActivity(){override fun onCreate(savedInstanceState:
    }else{
     LazyColumn(verticalArrangement=Arrangement.spacedBy(10.dp)){
      item{
-      Card(colors=CardDefaults.cardColors(containerColor=Color(0xFF254038)))){
+      Card(colors=CardDefaults.cardColors(containerColor=Color(0xFF254038))){
        Text("GERÇEK FİKSTÜR BAĞLANTISI • API anahtarı telefona girilmez. HTTPS backend adresinizi girin.",Modifier.padding(12.dp))
       }
       Spacer(Modifier.height(10.dp))
