@@ -17,6 +17,8 @@ import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.activity.compose.BackHandler
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -127,19 +129,21 @@ class MainActivity:ComponentActivity() {
 }
 @Composable private fun App() {
     val base=BuildConfig.API_BASE_URL
-    var league by remember { mutableStateOf("TR1") }
+    val prefs=remember { getPrefsHolder() }
+    var league by remember { mutableStateOf(prefs.getString("default_league","TR1") ?: "TR1") }
     var turkish by remember { mutableStateOf<List<League>>(emptyList()) }
     var expanded by remember { mutableStateOf<ExtendedMarkets?>(null) }
     // Historical community Turkish leagues are deliberately hidden; only current fixtures are selectable.
     var search by remember { mutableStateOf("") }
     var section by remember { mutableIntStateOf(0) }
-    var dayFilter by remember { mutableIntStateOf(0) }
+    var dayFilter by remember { mutableIntStateOf(prefs.getInt("default_day",0)) }
     var showOnlyFavorites by remember { mutableStateOf(false) }
     var showAllSeason by remember { mutableStateOf(false) }
-    val prefs=remember { getPrefsHolder() }
     var favorites by remember { mutableStateOf(prefs.getStringSet("favorites", emptySet())?.toSet() ?: emptySet()) }
     var compactCards by remember { mutableStateOf(prefs.getBoolean("compact_cards", false)) }
     var showSource by remember { mutableStateOf(prefs.getBoolean("show_source", true)) }
+    var lightTheme by remember { mutableStateOf(prefs.getBoolean("light_theme", false)) }
+    var networkStatus by remember { mutableStateOf("Bekleniyor") }
     fun matchKey(m:Match)="$league:${m.id}"
     fun toggleFavorite(m:Match) {
         val key=matchKey(m)
@@ -149,6 +153,7 @@ class MainActivity:ComponentActivity() {
     var result by remember { mutableStateOf<Fixtures?>(null) }
     var error by remember { mutableStateOf<String?>(null) }
     var selected by remember { mutableStateOf<Match?>(null) }
+    BackHandler(enabled=selected != null) { selected=null }
     var loading by remember { mutableStateOf(false) }
     var refresh by remember { mutableIntStateOf(0) }
     var estimate by remember { mutableStateOf<Analysis?>(null) }
@@ -158,7 +163,9 @@ class MainActivity:ComponentActivity() {
         selected=null;result=null;error=null
         if(base.isBlank()) return@LaunchedEffect
         loading=true
-        try { result=fixtures(base,league,refresh>0) } catch(e:Exception) { error=e.message ?: "Bağlantı kurulamadı" } finally { loading=false }
+        try { result=fixtures(base,league,refresh>0);networkStatus="Bağlandı" }
+        catch(e:Exception) { error=e.message ?: "Bağlantı kurulamadı";networkStatus="Bağlantı sorunu" }
+        finally { loading=false }
     }
     LaunchedEffect(selected?.id,league) {
         estimate=null;expanded=null;analysisError=null
@@ -171,27 +178,57 @@ class MainActivity:ComponentActivity() {
             expanded=extendedMarkets(response)
         } catch(e:Exception) { analysisError=e.message ?: "Analiz alınamadı" } finally { analysisLoading=false }
     }
-    MaterialTheme(colorScheme=darkColorScheme(primary=mint,background=bg,surface=surface,onBackground=white,onSurface=white)) {
+    MaterialTheme(colorScheme=darkColorScheme(primary=mint,secondary=mint,tertiary=mint,background=bg,surface=surface,onBackground=white,onSurface=white)) {
         Column(Modifier.fillMaxSize().background(bg).statusBarsPadding().navigationBarsPadding()) {
-            Column(Modifier.fillMaxWidth().padding(start=20.dp,end=20.dp,top=8.dp,bottom=12.dp)) {
-                Text("PALA AI SCORE",color=mint,fontSize=28.sp,fontWeight=FontWeight.Black)
-                Text("FUTBOL ANALİZ MERKEZİ   •   V${BuildConfig.VERSION_NAME}",color=muted,fontSize=12.sp,letterSpacing=1.sp)
+            Row(Modifier.fillMaxWidth().padding(start=18.dp,end=18.dp,top=5.dp,bottom=8.dp),verticalAlignment=Alignment.CenterVertically) {
+                Box(Modifier.size(42.dp).clip(RoundedCornerShape(12.dp)).background(surface2),contentAlignment=Alignment.Center) {
+                    Icon(Icons.Filled.SportsSoccer,contentDescription=null,tint=mint,modifier=Modifier.size(28.dp))
+                }
+                Spacer(Modifier.width(10.dp))
+                Column(Modifier.weight(1f)) {
+                    Text("PALA AI SCORE",color=mint,fontSize=21.sp,fontWeight=FontWeight.Black,maxLines=1)
+                    Text("FUTBOL ANALİZİ  •  ${BuildConfig.VERSION_NAME}",color=muted,fontSize=10.sp,letterSpacing=.5.sp)
+                }
+                if(selected==null) IconButton(onClick={section=4}) { Icon(Icons.Filled.Settings,contentDescription="Ayarlar",tint=muted) }
             }
             if(selected == null && section==4) {
                 Column(Modifier.weight(1f).verticalScroll(rememberScrollState()).padding(20.dp),verticalArrangement=Arrangement.spacedBy(16.dp)) {
                     Text("Ayarlar",fontSize=27.sp,color=white,fontWeight=FontWeight.Bold)
-                    Text("Görünüm ve veri tercihleri",color=muted)
+                    Text("Görünüm, lig ve veri tercihleri",color=muted)
+                    Panel { Row(verticalAlignment=Alignment.CenterVertically) { Icon(Icons.Filled.CheckCircle,contentDescription=null,tint=if(networkStatus=="Bağlandı") mint else muted);Spacer(Modifier.width(8.dp));Column { Text("API durumu: $networkStatus",color=white);Text("Sunucu: Render • Yalnızca HTTPS",color=muted,fontSize=11.sp) } } }
                     Panel { Row(verticalAlignment=Alignment.CenterVertically) { Column(Modifier.weight(1f)) { Text("Kompakt maç kartları",color=white);Text("Ekranda daha fazla maç göster",color=muted,fontSize=12.sp) };Switch(checked=compactCards,onCheckedChange={compactCards=it;prefs.edit().putBoolean("compact_cards",it).apply()}) } }
                     Panel { Row(verticalAlignment=Alignment.CenterVertically) { Column(Modifier.weight(1f)) { Text("Veri kaynağını göster",color=white);Text("Analizlerin hangi kaynaktan geldiğini belirt",color=muted,fontSize=12.sp) };Switch(checked=showSource,onCheckedChange={showSource=it;prefs.edit().putBoolean("show_source",it).apply()}) } }
+                    Panel {
+                        Text("Varsayılan lig",color=mint,fontWeight=FontWeight.Bold)
+                        var settingsLeaguePicker by remember { mutableStateOf(false) }
+                        OutlinedButton(onClick={settingsLeaguePicker=true},modifier=Modifier.fillMaxWidth()) { Text(leagues.firstOrNull{it.first==league}?.second ?: league,color=white) }
+                        if(settingsLeaguePicker) AlertDialog(onDismissRequest={settingsLeaguePicker=false},title={Text("Varsayılan lig")},text={
+                            Column(Modifier.heightIn(max=360.dp).verticalScroll(rememberScrollState())) {
+                                leagues.forEach { (code,name) -> Text(name,Modifier.fillMaxWidth().clickable { league=code;prefs.edit().putString("default_league",code).apply();settingsLeaguePicker=false }.padding(12.dp),color=white) }
+                            }
+                        },confirmButton={TextButton(onClick={settingsLeaguePicker=false}){Text("Kapat")}},containerColor=surface)
+                        Text("Varsayılan tarih filtresi",color=white,fontSize=13.sp)
+                        Row(Modifier.horizontalScroll(rememberScrollState())) {
+                            listOf("Bugün","Yarın","7 gün","Tümü").forEachIndexed { i,label ->
+                                FilterChip(selected=dayFilter==i,onClick={dayFilter=i;prefs.edit().putInt("default_day",i).apply()},label={Text(label)},modifier=Modifier.padding(end=5.dp))
+                            }
+                        }
+                    }
                     Panel { Text("Veri güncelliği",color=mint,fontWeight=FontWeight.Bold);Text("Fikstürler 3 dakika, analizler 10 dakika bellekte saklanır. Yenile düğmesi fikstürü tekrar indirir.",color=white,fontSize=13.sp) }
                     Panel { Text("Tahminlerin sınırları",color=mint,fontWeight=FontWeight.Bold);Text("Gol modeli geçmiş sonuçları kullanır; korner ve kart pazarları yalnızca olay verisi bulunduğunda hesaplanır. Penaltı ve eksik pazarlar için tahmin uydurulmaz. Kazanç garantisi yoktur.",color=white,fontSize=13.sp) }
-                    OutlinedButton(onClick={synchronized(httpCacheLock){httpCache.clear()};refresh++},modifier=Modifier.fillMaxWidth()) { Text("Bellek önbelleğini temizle",color=mint) }
+                    OutlinedButton(onClick={synchronized(httpCacheLock){httpCache.clear()};refresh++},modifier=Modifier.fillMaxWidth()) { Text("Önbelleği temizle ve yeniden yükle",color=mint) }
                     Text("PALA AI SCORE • ${BuildConfig.VERSION_NAME}",color=muted,fontSize=12.sp)
                 }
             } else if(selected == null) {
                 Column(Modifier.weight(1f).padding(horizontal=18.dp)) {
                     Text(when(section){1->"Favori maçlar";2->"Ligler";3->"Analiz merkezi";else->"Maç merkezi"},fontSize=25.sp,color=white,fontWeight=FontWeight.Bold)
-                    Text("Güncel fikstür  •  Veriye dayalı olasılıklar",color=muted,fontSize=13.sp)
+                    Text("Güncel fikstür  •  Veriye dayalı olasılıklar",color=muted,fontSize=12.sp)
+                    Spacer(Modifier.height(10.dp))
+                    Row(horizontalArrangement=Arrangement.spacedBy(8.dp)) {
+                        DashboardStat("Lig",leagues.firstOrNull{it.first==league}?.second?.substringBefore(" ") ?: "TR",Modifier.weight(1f))
+                        DashboardStat("Maç",result?.matches?.count{it.status!="FINISHED"}?.toString() ?: "—",Modifier.weight(1f))
+                        DashboardStat("Durum",if(loading) "Yükleniyor" else if(error!=null) "Hata" else "Hazır",Modifier.weight(1f))
+                    }
                     Spacer(Modifier.height(16.dp))
                     Text("LİG SEÇİMİ",color=mint,fontWeight=FontWeight.Bold,fontSize=12.sp,letterSpacing=1.sp)
                     Spacer(Modifier.height(8.dp))
@@ -214,14 +251,18 @@ class MainActivity:ComponentActivity() {
                             FilterChip(selected=dayFilter==index,onClick={dayFilter=index},label={Text(label)},colors=FilterChipDefaults.filterChipColors(selectedContainerColor=mint,selectedLabelColor=bg))
                         }
                     }
-                    Text("Türkiye 2026/27 • Doğrulanmış fikstür kaynağı",color=muted,fontSize=11.sp)
+                    Text(if(league=="TR1") "Türkiye 2026/27 • Genel fikstür" else "Veri kapsamı lige göre değişebilir",color=muted,fontSize=11.sp)
                     Spacer(Modifier.height(10.dp))
                     OutlinedTextField(value=search,onValueChange={search=it},label={Text("Takım ara")},singleLine=true,modifier=Modifier.fillMaxWidth())
                     Spacer(Modifier.height(10.dp))
-                    Button(onClick={refresh++},enabled=!loading && base.isNotBlank()) { Text("Fikstürü yenile") }
+                    Row(verticalAlignment=Alignment.CenterVertically) {
+                        Button(onClick={refresh++},enabled=!loading && base.isNotBlank()) { Icon(Icons.Filled.Refresh,contentDescription=null);Spacer(Modifier.width(6.dp));Text("Yenile") }
+                        Spacer(Modifier.width(10.dp))
+                        Text(if(loading) "Güncelleniyor…" else "Önbellek etkin",color=muted,fontSize=11.sp)
+                    }
                     if(loading) { Spacer(Modifier.height(12.dp));LinearProgressIndicator(Modifier.fillMaxWidth(),color=mint) }
                     if(base.isBlank()) MessageCard("Kurulum bekleniyor","APK'ya HTTPS backend adresi eklenmemiş.")
-                    if(error != null) MessageCard("Bağlantı hatası",error ?: "")
+                    if(error != null) MessageCard("Bağlantı hatası", "${error ?: ""}. İnternet bağlantını kontrol et ve Yenile'ye dokun.")
                     result?.let { data ->
                         Spacer(Modifier.height(12.dp))
                         if(showSource) Text("● Kaynak: ${data.source}",color=mint,fontSize=12.sp)
@@ -245,7 +286,7 @@ class MainActivity:ComponentActivity() {
                                             Text(local(m.utc),color=mint,fontSize=12.sp)
                                             Spacer(Modifier.height(if(compactCards) 3.dp else 9.dp))
                                             Text("${m.home}  –  ${m.away}",color=white,fontWeight=FontWeight.Bold,fontSize=if(compactCards) 15.sp else 17.sp)
-                                            Text("MAÇ ANALİZİ  ›",color=mint,fontSize=12.sp,fontWeight=FontWeight.Bold)
+                                            Text("TAHMİNLERİ İNCELE  ›",color=mint,fontSize=11.sp,fontWeight=FontWeight.Bold)
                                         }
                                         IconButton(onClick={toggleFavorite(m)}) {
                                             Icon(if(matchKey(m) in favorites) Icons.Filled.Star else Icons.Filled.StarBorder,contentDescription="Favori",tint=if(matchKey(m) in favorites) Color(0xFFFFCB56) else muted)
@@ -263,6 +304,10 @@ class MainActivity:ComponentActivity() {
                     TextButton(onClick={selected=null},modifier=Modifier.padding(start=10.dp)) { Text("← Maç listesine dön",color=mint) }
                     LazyColumn(Modifier.fillMaxSize(),contentPadding=PaddingValues(start=16.dp,end=16.dp,bottom=32.dp),verticalArrangement=Arrangement.spacedBy(14.dp)) {
                         item { MatchHero(match,league) }
+                        item { Panel {
+                            Text("ANALİZ DURUMU",color=mint,fontSize=12.sp,fontWeight=FontWeight.Bold)
+                            Text(if(analysisLoading) "Hesaplanıyor…" else if(estimate!=null) "Geçmiş maçlara dayalı model hazır" else "Veri bekleniyor",color=white,fontSize=13.sp)
+                        } }
                         item {
                             Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),horizontalArrangement=Arrangement.spacedBy(8.dp)) {
                                 listOf("Özet","İstatistik","Goller","Korner","Kartlar","Penaltı","Kadrolar","H2H").forEachIndexed { i,label ->
@@ -373,3 +418,10 @@ class MainActivity:ComponentActivity() {
     }
 }
 @Composable private fun MessageCard(title:String,detail:String) { Panel { Text(title,color=mint,fontWeight=FontWeight.Bold);Spacer(Modifier.height(6.dp));Text(detail,color=white) } }
+
+@Composable private fun DashboardStat(title:String,value:String,modifier:Modifier=Modifier) {
+    Column(modifier.clip(RoundedCornerShape(12.dp)).background(surface).padding(horizontal=10.dp,vertical=9.dp)) {
+        Text(title,color=muted,fontSize=10.sp)
+        Text(value,color=mint,fontSize=13.sp,fontWeight=FontWeight.Bold,maxLines=1,overflow=TextOverflow.Ellipsis)
+    }
+}
