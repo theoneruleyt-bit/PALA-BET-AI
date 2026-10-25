@@ -13,7 +13,7 @@ from .event_stats import get_event_estimates
 
 FREE_LEAGUE_NAMES = {'BL1':'Bundesliga','BL2':'2. Bundesliga','BL3':'3. Liga','UCL':'Şampiyonlar Ligi','DFB':'Almanya Kupası','PLFREE':'Premier League (topluluk)','LALIGA':'La Liga (topluluk)','UEL':'Avrupa Ligi','WBL':'Kadınlar Bundesliga','NLA':'Uluslar Ligi A','RLN':'Regionalliga Nord','RLNO':'Regionalliga Nordost'}
 
-app = FastAPI(title='PALA BET AI - Research API', version='1.3.0')
+app = FastAPI(title='PALA AI SCORE - Research API', version='1.4.0')
 
 _RESEARCH_CACHE = {}
 _RESEARCH_LOCK = Lock()

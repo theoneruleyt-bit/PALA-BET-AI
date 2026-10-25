@@ -154,8 +154,8 @@ class MainActivity:ComponentActivity() {
     MaterialTheme(colorScheme=darkColorScheme(primary=mint,background=bg,surface=surface,onBackground=white,onSurface=white)) {
         Column(Modifier.fillMaxSize().background(bg).statusBarsPadding()) {
             Column(Modifier.fillMaxWidth().padding(start=20.dp,end=20.dp,top=8.dp,bottom=12.dp)) {
-                Text("PALA BET AI",color=mint,fontSize=29.sp,fontWeight=FontWeight.Black)
-                Text("MATCH INTELLIGENCE   •   V${BuildConfig.VERSION_NAME}",color=muted,fontSize=12.sp,letterSpacing=1.sp)
+                Text("PALA AI SCORE",color=mint,fontSize=28.sp,fontWeight=FontWeight.Black)
+                Text("FUTBOL ANALİZ MERKEZİ   •   V${BuildConfig.VERSION_NAME}",color=muted,fontSize=12.sp,letterSpacing=1.sp)
             }
             if(selected == null) {
                 Column(Modifier.fillMaxSize().padding(horizontal=18.dp)) {
