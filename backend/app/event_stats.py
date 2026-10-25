@@ -5,10 +5,15 @@ import csv
 import io
 import math
 import re
+import time
+from threading import Lock
 from urllib.request import Request, urlopen
 from urllib.error import HTTPError, URLError
 
 CSV_URL = 'https://www.football-data.co.uk/mmz4281/2627/T1.csv'
+_CSV_CACHE = None
+_CSV_LOCK = Lock()
+_CSV_TTL = 900
 
 def _key(name):
     import unicodedata
@@ -63,7 +68,13 @@ def estimate_events(rows, home, away):
             'disclaimer':'Historical observations, not guaranteed predictions; coverage may be incomplete.'}
 
 def get_event_estimates(home, away, *, fetch=None):
+    global _CSV_CACHE
     try:
+        if fetch is None:
+            with _CSV_LOCK:
+                cached = _CSV_CACHE
+                if cached is not None and time.monotonic() - cached[0] < _CSV_TTL:
+                    return estimate_events(cached[1], home, away)
         if fetch is None:
             with urlopen(Request(CSV_URL,headers={'User-Agent':'PalaBetAI/1.2'}),timeout=10) as response:
                 raw=response.read()
@@ -73,6 +84,9 @@ def get_event_estimates(home, away, *, fetch=None):
         rows=list(csv.DictReader(io.StringIO(content)))
         if not rows or not {'HomeTeam','AwayTeam'}.issubset(rows[0]):
             raise ValueError('Unexpected CSV columns')
+        if fetch is None:
+            with _CSV_LOCK:
+                _CSV_CACHE = (time.monotonic(), rows)
         return estimate_events(rows,home,away)
     except (HTTPError,URLError,TimeoutError,ValueError,UnicodeError,TypeError):
         return {'corners':{'status':'unavailable'},'yellow_cards':{'status':'unavailable'},

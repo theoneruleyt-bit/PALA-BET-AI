@@ -58,9 +58,8 @@ private suspend fun loadTurkishLeagues(base:String):List<League> = withContext(D
         if(code.startsWith("TR:") && name.isNotBlank()) League(code,name) else null
     }.distinctBy { it.code }
 }
-private suspend fun extendedMarkets(base:String,league:String,id:String):ExtendedMarkets? = withContext(Dispatchers.IO) {
-    val response=request("${base.trimEnd('/')}/research/$league/$id")
-    val j=response.optJSONObject("markets") ?: return@withContext null
+private fun extendedMarkets(response:JSONObject):ExtendedMarkets? {
+    val j=response.optJSONObject("markets") ?: return null
     val goal=j.optJSONObject("goal_lines")
     val lines=goal?.keys()?.asSequence()?.toList()?.sortedBy { it.toDoubleOrNull() ?: 99.0 }?.mapNotNull { key ->
         val over=goal.optJSONObject(key)?.optDouble("over") ?: return@mapNotNull null
@@ -73,23 +72,36 @@ private suspend fun extendedMarkets(base:String,league:String,id:String):Extende
     }
     val tg=j.optJSONObject("team_goals")
     val team=if(tg==null) emptyList() else tg.keys().asSequence().toList().sorted().map { it.replace('_',' ') to tg.optDouble(it) }
-    ExtendedMarkets(lines,scores,team,response.optJSONObject("event_markets"))
+    return ExtendedMarkets(lines,scores,team,response.optJSONObject("event_markets"))
 }
 private data class Analysis(val home:Double,val draw:Double,val away:Double,val btts:Double,val over:Double,val under:Double,val homeSample:Int,val awaySample:Int,val homeGoals:Double?,val awayGoals:Double?,val method:String)
 private fun local(value:String):String = try { DateTimeFormatter.ofPattern("dd.MM.yyyy • HH:mm").withZone(ZoneId.systemDefault()).format(Instant.parse(value)) } catch (_:Exception) { value }
 private fun percentage(n:Double):String = String.format(Locale.US,"%.1f%%",n*100)
-private fun request(url:String):JSONObject {
+private val httpCache = mutableMapOf<String,Pair<Long,String>>()
+private val httpCacheLock = Any()
+private fun request(url:String, forceRefresh:Boolean=false):JSONObject {
+    val now=System.currentTimeMillis()
+    if(!forceRefresh) synchronized(httpCacheLock) {
+        val cached=httpCache[url]
+        val ttl=if(url.contains("/research/")) 600000L else 180000L
+        if(cached!=null && now-cached.first<ttl) return JSONObject(cached.second)
+    }
     val conn = URL(url).openConnection() as HttpURLConnection
     conn.connectTimeout = 15000
     conn.readTimeout = 25000
     try {
         if(conn.responseCode != 200) throw IllegalStateException("HTTP ${conn.responseCode}")
-        return JSONObject(conn.inputStream.bufferedReader().use { it.readText() })
+        val body=conn.inputStream.bufferedReader().use { it.readText() }
+        synchronized(httpCacheLock) {
+            if(httpCache.size>150) httpCache.clear()
+            httpCache[url]=System.currentTimeMillis() to body
+        }
+        return JSONObject(body)
     } finally { conn.disconnect() }
 }
-private suspend fun fixtures(base:String,league:String):Fixtures = withContext(Dispatchers.IO) {
+private suspend fun fixtures(base:String,league:String,forceRefresh:Boolean=false):Fixtures = withContext(Dispatchers.IO) {
     require(base.startsWith("https://")) { "HTTPS adresi gerekli" }
-    val j = request("${base.trimEnd('/')}/fixtures/$league")
+    val j = request("${base.trimEnd('/')}/fixtures/$league",forceRefresh)
     if(j.optString("mode") != "provider") throw IllegalStateException("Sağlayıcı verisi doğrulanamadı")
     val arr = j.getJSONArray("matches")
     val matches = (0 until arr.length()).mapNotNull { i ->
@@ -99,10 +111,10 @@ private suspend fun fixtures(base:String,league:String):Fixtures = withContext(D
     }
     Fixtures(matches,j.optString("source"),j.optString("fetched_at"))
 }
-private suspend fun analysis(base:String,league:String,id:String):Analysis? = withContext(Dispatchers.IO) {
-    val j=request("${base.trimEnd('/')}/research/$league/$id").optJSONObject("analysis") ?: return@withContext null
+private fun analysis(response:JSONObject):Analysis? {
+    val j=response.optJSONObject("analysis") ?: return null
     val p=j.getJSONObject("probabilities");val n=j.getJSONObject("sample");val goals=j.optJSONObject("goal_rates")
-    Analysis(p.getDouble("home"),p.getDouble("draw"),p.getDouble("away"),p.getDouble("btts"),p.getDouble("over25"),p.getDouble("under25"),n.getInt("home"),n.getInt("away"),goals?.optDouble("home")?.takeUnless { it.isNaN() },goals?.optDouble("away")?.takeUnless { it.isNaN() },j.optString("method","Poisson + geçmiş gol ortalamaları"))
+    return Analysis(p.getDouble("home"),p.getDouble("draw"),p.getDouble("away"),p.getDouble("btts"),p.getDouble("over25"),p.getDouble("under25"),n.getInt("home"),n.getInt("away"),goals?.optDouble("home")?.takeUnless { it.isNaN() },goals?.optDouble("away")?.takeUnless { it.isNaN() },j.optString("method","Poisson + geçmiş gol ortalamaları"))
 }
 class MainActivity:ComponentActivity() {
     override fun onCreate(savedInstanceState:Bundle?) { super.onCreate(savedInstanceState);window.statusBarColor=android.graphics.Color.rgb(7,19,29);window.navigationBarColor=android.graphics.Color.rgb(7,19,29);setContent { App() } }
@@ -126,14 +138,18 @@ class MainActivity:ComponentActivity() {
         selected=null;result=null;error=null
         if(base.isBlank()) return@LaunchedEffect
         loading=true
-        try { result=fixtures(base,league) } catch(e:Exception) { error=e.message ?: "Bağlantı kurulamadı" } finally { loading=false }
+        try { result=fixtures(base,league,refresh>0) } catch(e:Exception) { error=e.message ?: "Bağlantı kurulamadı" } finally { loading=false }
     }
     LaunchedEffect(selected?.id,league) {
         estimate=null;expanded=null;analysisError=null
         val m=selected ?: return@LaunchedEffect
         if(base.isBlank() || (league !in listOf("BL1","BL2","BL3","UCL","UEL","DFB","PLFREE","LALIGA","WBL","NLA","RLN","RLNO","TR1") && !league.startsWith("TR:"))) return@LaunchedEffect
         analysisLoading=true
-        try { estimate=analysis(base,league,m.id); if(estimate!=null) expanded=extendedMarkets(base,league,m.id) } catch(e:Exception) { analysisError=e.message ?: "Analiz alınamadı" } finally { analysisLoading=false }
+        try {
+            val response=withContext(Dispatchers.IO) { request("${base.trimEnd('/')}/research/$league/${m.id}") }
+            estimate=analysis(response)
+            expanded=extendedMarkets(response)
+        } catch(e:Exception) { analysisError=e.message ?: "Analiz alınamadı" } finally { analysisLoading=false }
     }
     MaterialTheme(colorScheme=darkColorScheme(primary=mint,background=bg,surface=surface,onBackground=white,onSurface=white)) {
         Column(Modifier.fillMaxSize().background(bg).statusBarsPadding()) {

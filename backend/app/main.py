@@ -1,4 +1,7 @@
 from fastapi import FastAPI, HTTPException
+from functools import lru_cache
+from time import monotonic
+from threading import Lock
 from pydantic import BaseModel, Field
 from .model import predict, elo_expected, fair_odds
 from .football_data import get_matches as get_football_data_matches, ProviderError
@@ -10,7 +13,26 @@ from .event_stats import get_event_estimates
 
 FREE_LEAGUE_NAMES = {'BL1':'Bundesliga','BL2':'2. Bundesliga','BL3':'3. Liga','UCL':'Şampiyonlar Ligi','DFB':'Almanya Kupası','PLFREE':'Premier League (topluluk)','LALIGA':'La Liga (topluluk)','UEL':'Avrupa Ligi','WBL':'Kadınlar Bundesliga','NLA':'Uluslar Ligi A','RLN':'Regionalliga Nord','RLNO':'Regionalliga Nordost'}
 
-app = FastAPI(title='PALA BET AI - Research API', version='1.2.0')
+app = FastAPI(title='PALA BET AI - Research API', version='1.3.0')
+
+_RESEARCH_CACHE = {}
+_RESEARCH_LOCK = Lock()
+_RESEARCH_TTL = 600
+
+def _cache_get(key):
+    with _RESEARCH_LOCK:
+        item = _RESEARCH_CACHE.get(key)
+        if item and monotonic() - item[0] < _RESEARCH_TTL:
+            return item[1]
+    return None
+
+def _cache_put(key, value):
+    with _RESEARCH_LOCK:
+        if len(_RESEARCH_CACHE) > 400:
+            _RESEARCH_CACHE.clear()
+        _RESEARCH_CACHE[key] = (monotonic(), value)
+    return value
+
 
 class MatchInput(BaseModel):
     home_xg: float = Field(ge=0.05, le=8)
@@ -20,11 +42,11 @@ class MatchInput(BaseModel):
 
 @app.get('/health')
 def health():
-    return {'status':'ok','version':'1.2.0','mode':'research','keyless_leagues':list(LEAGUES)}
+    return {'status':'ok','version':'1.3.0','mode':'research','keyless_leagues':list(LEAGUES)}
 
 @app.get('/leagues')
 def leagues():
-    return {'keyless':[{'code':'TR1','name':'Türkiye Süper Lig 2026/27','provider':'FixtureDownload'}]+[{'code':code,'name':name} for code,name in FREE_LEAGUE_NAMES.items()], 'turkish_discovery':[], 'optional_token':['PL','PD','SA','FL1'], 'note':'Only curated leagues with public OpenLigaDB shortcuts. Availability and completeness may vary. Turkish leagues not verified.'}
+    return {'keyless':[{'code':'TR1','name':'Türkiye Süper Lig 2026/27','provider':'FixtureDownload'}]+[{'code':code,'name':name} for code,name in FREE_LEAGUE_NAMES.items()], 'turkish_discovery':[], 'optional_token':['PL','PD','SA','FL1'], 'note':'Public data coverage varies. Only current TR1 fixtures are curated; other leagues may be incomplete.'}
 
 def _turkish_catalog():
     try: return discover_turkish_leagues()
@@ -53,6 +75,9 @@ def fixtures(competition: str):
 
 @app.get('/research/{competition}/{match_id}')
 def research(competition: str, match_id: str):
+    cached = _cache_get((competition, match_id))
+    if cached is not None:
+        return cached
     if competition != 'TR1' and competition not in LEAGUES and not competition.startswith('TR:'):
         raise HTTPException(status_code=400, detail='Research not available for this competition')
     try:
@@ -67,4 +92,19 @@ def research(competition: str, match_id: str):
     before = target.get('matchDateTimeUTC')
     history = normalize(raw)
     result = estimate(history, home, away, before=before) if home and away and before else None
-    return {'source':'FixtureDownload 2026/27' if competition == 'TR1' else 'OpenLigaDB (community data)', 'competition':competition, 'match_id':match_id, 'status':'estimated' if result else 'insufficient_data', 'analysis':result, 'markets':extra_markets(result) if result else None, 'validation':backtest(history), 'event_markets':get_event_estimates(home, away) if competition == 'TR1' else {'corners':{'status':'unavailable'},'yellow_cards':{'status':'unavailable'},'red_cards':{'status':'unavailable'},'penalties':{'status':'unavailable'}}, 'note':'Research-only estimates; past match scores are not xG. Data may be incomplete.'}
+    return _cache_put((competition, match_id), {'source':'FixtureDownload 2026/27' if competition == 'TR1' else 'OpenLigaDB (community data)', 'competition':competition, 'match_id':match_id, 'status':'estimated' if result else 'insufficient_data', 'analysis':result, 'markets':extra_markets(result) if result else None, 'validation':{'status':'available_on_demand','note':'Full historical backtest excluded from interactive match request to reduce latency'}, 'event_markets':get_event_estimates(home, away) if competition == 'TR1' else {'corners':{'status':'unavailable'},'yellow_cards':{'status':'unavailable'},'red_cards':{'status':'unavailable'},'penalties':{'status':'unavailable'}}, 'note':'Research-only estimates; past match scores are not xG. Data may be incomplete.'})
+
+
+@app.get('/validation/{competition}')
+def validation(competition: str):
+    """Expensive walk-forward validation is deliberately separate from match loading."""
+    if competition != 'TR1' and competition not in LEAGUES:
+        raise HTTPException(status_code=400, detail='Unsupported competition')
+    cached = _cache_get(('validation', competition))
+    if cached is not None:
+        return cached
+    try:
+        raw = turkey_raw() if competition == 'TR1' else get_raw_matches(competition)
+    except (OpenLigaError, TurkeyFeedError) as exc:
+        raise HTTPException(status_code=503, detail='Historical provider unavailable') from exc
+    return _cache_put(('validation', competition), {'competition':competition,'validation':backtest(normalize(raw))})

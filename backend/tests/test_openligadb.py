@@ -29,6 +29,6 @@ def test_invalid_league():
 
 def test_health_and_leagues():
     c = TestClient(app)
-    assert c.get('/health').json()['version']=='1.2.0'
+    assert c.get('/health').json()['version']=='1.3.0'
     assert c.get('/leagues').status_code==200
     assert c.get('/fixtures/UNKNOWN').status_code==400
